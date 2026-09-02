@@ -209,6 +209,14 @@ declare -A GROUP_RESCAN       # root -> sysfs rescan file to use
 declare -A GROUP_CHAIN        # root -> bridges between root and the GPUs
 ACHIEVED_PLAN="none"
 LAST_LOSERS=""                # GPUs that lost a BAR in the last rejected plan
+GUARD_BLOCKED=0               # GPUs the bind guard fenced off in this run
+# Register state we own between a ReBAR write and the re-enumeration that
+# makes the kernel see it. A "dirty" GPU decodes a different aperture size
+# than the kernel assigned; handing it to a driver is what the bind guard
+# exists to prevent, so the guard refuses while any GPU is dirty.
+declare -A GPU_DIRTY          # "1" while a written size index has not been re-enumerated
+declare -A GPU_DIRTY_FROM     # size index the kernel's current assignment corresponds to
+declare -A GPU_DECODE_OFF     # "1" while we hold memory decode disabled around a write
 
 # ---------------------------------------------------------------------------
 # Small helpers
@@ -342,16 +350,65 @@ read_size_index() {   # current BAR0 size index, -1 when unknown
     val=$(setpci -s "$bdf" "0x$ctrl.l" 2>/dev/null) || { echo -1; return; }
     echo $(( (16#$val >> 8) & 0x3F ))
 }
-write_size_index() {
-    local bdf=$1 want=$2 ctrl=${GPU_REBAR_CTRL[$1]:-} val new cmd
-    [[ -n $ctrl ]] || return 1
-    # Disable memory decoding while the aperture size changes (PCIe spec 7.8.6).
+# restore_decode BDF -- re-enables memory decode (COMMAND bit 1) if a size
+# write disabled it; the kernel only touches that bit on a driver probe, and
+# a fenced-off or rolled-back GPU never gets one; returns 0 when decode is on
+restore_decode() {
+    local bdf=$1 cmd
+    [[ -n ${GPU_DECODE_OFF[$bdf]:-} ]] || return 0
     cmd=$(setpci -s "$bdf" COMMAND 2>/dev/null) || return 1
-    setpci -s "$bdf" COMMAND="$(printf '%04x' $(( 16#$cmd & ~0x2 )))" 2>/dev/null || true
-    val=$(setpci -s "$bdf" "0x$ctrl.l" 2>/dev/null) || return 1
-    new=$(printf '%08x' $(( (16#$val & ~0x3F00) | (want << 8) )))
-    setpci -s "$bdf" "0x$ctrl.l=$new" 2>/dev/null || return 1
-    [[ $(read_size_index "$bdf") == "$want" ]]
+    setpci -s "$bdf" COMMAND="$(printf '%04x' $(( 16#$cmd | 0x2 )))" 2>/dev/null || return 1
+    unset "GPU_DECODE_OFF[$bdf]"
+    return 0
+}
+# write_size_index BDF INDEX -- programs BAR0's size index with memory decode
+# held off for the write (PCIe 7.8.6) and restored afterwards, whatever the
+# outcome; keeps GPU_DIRTY in step with what the register now says relative
+# to the kernel's assignment; returns 0 when the readback equals INDEX
+write_size_index() {
+    local bdf=$1 want=$2 ctrl=${GPU_REBAR_CTRL[$1]:-} val new cmd have now rc=1
+    [[ -n $ctrl ]] || return 1
+    have=$(read_size_index "$bdf"); (( have >= 0 )) || return 1
+    cmd=$(setpci -s "$bdf" COMMAND 2>/dev/null) || return 1
+    if (( 16#$cmd & 0x2 )); then
+        GPU_DECODE_OFF[$bdf]=1
+        setpci -s "$bdf" COMMAND="$(printf '%04x' $(( 16#$cmd & ~0x2 )))" 2>/dev/null \
+            || { unset "GPU_DECODE_OFF[$bdf]"; return 1; }
+    fi
+    if val=$(setpci -s "$bdf" "0x$ctrl.l" 2>/dev/null); then
+        new=$(printf '%08x' $(( (16#$val & ~0x3F00) | (want << 8) )))
+        setpci -s "$bdf" "0x$ctrl.l=$new" 2>/dev/null
+    fi
+    now=$(read_size_index "$bdf")
+    [[ $now == "$want" ]] && rc=0
+    if [[ -z ${GPU_DIRTY[$bdf]:-} && $now != "$have" ]]; then
+        GPU_DIRTY[$bdf]=1; GPU_DIRTY_FROM[$bdf]=$have
+    elif [[ -n ${GPU_DIRTY[$bdf]:-} && $now == "${GPU_DIRTY_FROM[$bdf]}" ]]; then
+        unset "GPU_DIRTY[$bdf]" "GPU_DIRTY_FROM[$bdf]"
+    fi
+    restore_decode "$bdf" || log_warn "  $bdf: could not re-enable memory decode"
+    return "$rc"
+}
+# rollback_dirty -- writes every dirty GPU's register back to the index the
+# kernel's assignment corresponds to; returns 0 when no GPU is left dirty
+rollback_dirty() {
+    local g from left=0
+    for g in "${!GPU_DIRTY[@]}"; do
+        present "$g" || continue
+        from=${GPU_DIRTY_FROM[$g]}
+        if write_size_index "$g" "$from"; then
+            log_info "  $g size index rolled back to $from"
+        else
+            log_err "  $g could not be rolled back; its register no longer matches the kernel's BAR assignment"; left=1
+        fi
+    done
+    return "$left"
+}
+# mark_group_reenumerated ROOT -- forgets the dirty state of ROOT's members:
+# once the kernel has removed and re-enumerated them its assignment is fresh
+mark_group_reenumerated() {
+    local g
+    for g in ${GROUP_MEMBERS[$1]:-}; do unset "GPU_DIRTY[$g]" "GPU_DIRTY_FROM[$g]"; done
 }
 
 # ---------------------------------------------------------------------------
@@ -623,7 +680,7 @@ reenumerate() {
     for r in "${GROUPS_LIST[@]}"; do
         [[ $r == none:* ]] && continue
         if present "$r"; then
-            if echo 1 > "$(sysdev "$r")/remove" 2>/dev/null; then log_ok "  Removed subtree under $r"
+            if echo 1 > "$(sysdev "$r")/remove" 2>/dev/null; then log_ok "  Removed subtree under $r"; mark_group_reenumerated "$r"
             else log_err "  FAILED to remove $r"; return 1; fi
         else
             log_warn "  $r not present (already removed?)"
@@ -667,7 +724,9 @@ apply_plan() {
         elif write_size_index "$g" "$want"; then
             log_ok "  $g size index $have -> $want ($(size_index_to_human "$want"))"
         else
-            log_err "  $g FAILED to program size index $want"; return 1
+            log_err "  $g FAILED to program size index $want"
+            rollback_dirty || log_err "  A GPU is left with a size the kernel has not seen; the driver load will be refused"
+            return 1
         fi
     done
     return 0
@@ -783,8 +842,20 @@ wait_for_probe() {
 }
 
 guard_and_load_driver() {
-    local g bad blocked=0
+    local g bad blocked=0 dirty=""
     bad=$(failed_gpus)
+    # A GPU whose register was written this run but never re-enumerated
+    # would be probed against a stale BAR assignment; only a fenced-off GPU
+    # (in $bad, blocked below) may be left that way.
+    for g in "${!GPU_DIRTY[@]}"; do
+        present "$g" || continue
+        [[ " ${bad//$'\n'/ } " == *" $g "* ]] || dirty+="$g "
+    done
+    if [[ -n $dirty ]]; then
+        log_err "Size index written this run but not re-enumerated on: $dirty"
+        log_err "The kernel's BAR assignment no longer matches the register; refusing to load $DRIVER. Reboot to recover."
+        return 1
+    fi
     if [[ -n $bad ]]; then
         log_warn "Some GPUs still have an unassigned memory BAR. $DRIVER misdetects such a device as an SR-IOV virtual function"
         log_warn "and hangs forever in the mailbox handshake, so binding is being blocked on those devices."
@@ -796,12 +867,15 @@ guard_and_load_driver() {
                 log_err "  Loading it now would hang the boot. Reboot to recover."; return 1
             fi
             if [[ -n ${GPU_REBAR_CTRL[$g]:-} ]]; then
-                write_size_index "$g" "${GPU_BASE_INDEX[$g]}" \
-                    && log_info "  Reset $g size index to ${GPU_BASE_INDEX[$g]} for the next boot" \
-                    || log_warn "  Could not reset the size index on $g"
+                if write_size_index "$g" "${GPU_BASE_INDEX[$g]}"; then
+                    log_info "  Reset $g size index to ${GPU_BASE_INDEX[$g]} for the next boot"
+                else
+                    log_warn "  Could not reset the size index on $g"
+                fi
             fi
         done
     fi
+    GUARD_BLOCKED=$blocked
 
     if driver_loaded; then
         log_info "$DRIVER already loaded; re-binding the unguarded GPUs..."

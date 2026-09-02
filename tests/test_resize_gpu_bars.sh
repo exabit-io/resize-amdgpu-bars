@@ -154,11 +154,43 @@ lspci() {
         [[ $(cat "${DEVPATH[$bdf]}/class") == 0x0604* ]] && echo "	Prefetchable memory behind bridge: 90000000000-91fffffffff [size=128G] [32-bit]"
     fi
 }
+# Fault injection: SETPCI_FAIL_WRITES lists BDFs whose ReBAR control write
+# fails; SETPCI_FAIL_AFTER=N makes every control write after the first N
+# fail (-1: off). Each control write snapshots COMMAND into <bdf>.cmd_at_write.
+SETPCI_FAIL_WRITES=""; SETPCI_FAIL_AFTER=-1; SETPCI_CTRL_WRITES=0
 setpci() {
     local bdf="" arg
-    while (( $# )); do arg=$1; shift; case $arg in -s) bdf=$1; shift ;; *=*) echo "${arg#*=}" | sed 's/^/0x/' > "$REG/$bdf.${arg%%=*}" ;; *) [[ -r $REG/$bdf.$arg ]] && sed 's/^0x//' "$REG/$bdf.$arg" || return 1 ;; esac; done
+    while (( $# )); do
+        arg=$1; shift
+        case $arg in
+            -s) bdf=$1; shift ;;
+            COMMAND=*) echo "0x${arg#*=}" > "$REG/$bdf.COMMAND" ;;
+            *=*)
+                [[ " $SETPCI_FAIL_WRITES " == *" $bdf "* ]] && return 1
+                (( SETPCI_FAIL_AFTER >= 0 && SETPCI_CTRL_WRITES >= SETPCI_FAIL_AFTER )) && return 1
+                SETPCI_CTRL_WRITES=$((SETPCI_CTRL_WRITES + 1))
+                cp "$REG/$bdf.COMMAND" "$REG/$bdf.cmd_at_write"
+                echo "0x${arg#*=}" > "$REG/$bdf.${arg%%=*}" ;;
+            *) [[ -r $REG/$bdf.$arg ]] && sed 's/^0x//' "$REG/$bdf.$arg" || return 1 ;;
+        esac
+    done
 }
-export -f lspci setpci 2>/dev/null
+# modprobe / timeout: loading the driver binds every present GPU that is
+# not fenced off with driver_override=none, exactly what the kernel would do.
+MODPROBE_CALLS=0; MODPROBE_RC=0
+timeout() { shift 3; "$@"; }
+modprobe() {
+    local g
+    MODPROBE_CALLS=$((MODPROBE_CALLS + 1))
+    (( MODPROBE_RC )) && return "$MODPROBE_RC"
+    mkdir -p "$SYSFS/module/amdgpu"
+    for g in "${GPUS[@]}"; do
+        [[ -e ${DEVPATH[$g]} && $(cat "${DEVPATH[$g]}/driver_override") != none ]] || continue
+        ln -sfn "$SYSFS/bus/pci/drivers/amdgpu" "${DEVPATH[$g]}/driver"
+    done
+}
+unload_driver() { local g; rm -rf "$SYSFS/module/amdgpu"; for g in "${GPUS[@]}"; do rm -f "${DEVPATH[$g]}/driver"; done; }
+export -f lspci setpci timeout modprobe 2>/dev/null
 
 # ---------------------------------------------------------------------------
 build_tree
@@ -187,12 +219,21 @@ reenumerate() {
                 budget)    if (( sum <= 40 * 1073741824 )); then set_bars "$g" "$i" assigned; else (( n >= 2 )) && set_bars "$g" "$i" unassigned || set_bars "$g" "$i" assigned; fi ;;
             esac
         done
+        mark_group_reenumerated "$r"
     done
     REENUM_CALLS=$((REENUM_CALLS + 1))
     return 0
 }
 
 mkdir -p "$STATE_DIR"
+# reset_regs: every register back at index 8 with the BARs assigned there and
+# nothing dirty, the state a fresh boot on this firmware starts from.
+reset_regs() {
+    local g
+    for g in "${GPUS[@]}"; do [[ -n ${GPU_REBAR_CTRL[$g]} ]] && write_size_index "$g" 8 >/dev/null; done
+    for g in "${GPUS[@]}"; do set_bars "$g" 8 assigned; done
+    GPU_DIRTY=(); GPU_DIRTY_FROM=()
+}
 # No real waiting in the fake kernel.
 REMOVE_SETTLE=0; BIND_SETTLE=0; RESCAN_POLL=0; PROBE_POLL=0
 log_info() { :; }; log_ok() { :; }; log_warn() { :; }; log_err() { :; }   # quiet
@@ -247,8 +288,7 @@ assert_eq "fallback never wrote 8 on the firmware-15 die" "$(read_size_index 000
 assert_eq "fallback plan keeps it at 15" "${PLAN[0000:0b:00.0]}" 15
 assert_eq "its sibling still falls back to its own baseline" "${PLAN[0000:0e:00.0]}" 8
 rm -f "$STATE_DIR"/baseline-*; RULE=6x
-for g in "${GPUS[@]}"; do [[ -n ${GPU_REBAR_CTRL[$g]} ]] && write_size_index "$g" 8 >/dev/null; done
-for g in "${GPUS[@]}"; do set_bars "$g" 8 assigned; done
+reset_regs
 discover_gpus
 assert_eq "restored: baseline 8" "${GPU_BASE_INDEX[0000:0b:00.0]}" 8
 
@@ -261,8 +301,43 @@ assert_eq "human_bytes 0 is unassigned" "$(human_bytes 0)" unassigned
 echo "size register write"
 write_size_index 0000:0b:00.0 15 && ok "write index 15" || fail "write index 15"
 assert_eq "readback" "$(read_size_index 0000:0b:00.0)" 15
-assert_eq "memory decode disabled during write" "$(cat "$REG/0000:0b:00.0.COMMAND")" "0x0405"
+assert_eq "memory decode disabled during write" "$(cat "$REG/0000:0b:00.0.cmd_at_write")" "0x0405"
+assert_eq "memory decode re-enabled after the write" "$(cat "$REG/0000:0b:00.0.COMMAND")" "0x0407"
+assert_eq "written GPU is dirty until re-enumerated" "${GPU_DIRTY[0000:0b:00.0]:-}:${GPU_DIRTY_FROM[0000:0b:00.0]:-}" "1:8"
 write_size_index 0000:0b:00.0 8 >/dev/null
+assert_eq "writing the old index back makes it clean again" "${GPU_DIRTY[0000:0b:00.0]:-}" ""
+printf '0x0405\n' > "$REG/0000:0b:00.0.COMMAND"
+write_size_index 0000:0b:00.0 15 >/dev/null; write_size_index 0000:0b:00.0 8 >/dev/null
+assert_eq "decode left off when it was off before" "$(cat "$REG/0000:0b:00.0.COMMAND")" "0x0405"
+printf '0x0407\n' > "$REG/0000:0b:00.0.COMMAND"
+
+echo "apply_plan partial failure: rollback, decode, no driver load"
+GPU_DIRTY=(); GPU_DIRTY_FROM=(); REENUM_CALLS=0; MODPROBE_CALLS=0
+plan_all_max
+SETPCI_FAIL_WRITES="0000:0e:00.0"
+try_plan all-max 2>/dev/null; rc=$?
+assert_eq "plan fails" "$rc" 1
+assert_eq "first die rolled back to 8" "$(read_size_index 0000:0b:00.0)" 8
+assert_eq "failed die untouched" "$(read_size_index 0000:0e:00.0)" 8
+assert_eq "nothing dirty after rollback" "${#GPU_DIRTY[@]}" 0
+assert_eq "decode restored on the rolled-back die" "$(cat "$REG/0000:0b:00.0.COMMAND")" 0x0407
+assert_eq "decode restored on the failed die" "$(cat "$REG/0000:0e:00.0.COMMAND")" 0x0407
+assert_eq "no re-enumeration attempted" "$REENUM_CALLS" 0
+guard_and_load_driver 2>/dev/null; rc=$?
+assert_eq "clean after rollback: driver loads" "$rc:$MODPROBE_CALLS" "0:1"
+unload_driver; MODPROBE_CALLS=0
+SETPCI_FAIL_WRITES=""; SETPCI_FAIL_AFTER=$SETPCI_CTRL_WRITES; SETPCI_FAIL_AFTER=$((SETPCI_FAIL_AFTER + 1))   # one more write succeeds, then all fail
+try_plan all-max 2>/dev/null; rc=$?
+assert_eq "plan fails and rollback fails" "$rc" 1
+assert_eq "first die left at 15" "$(read_size_index 0000:0b:00.0)" 15
+assert_eq "first die dirty" "${GPU_DIRTY[0000:0b:00.0]:-}" 1
+assert_eq "decode still restored on the dirty die" "$(cat "$REG/0000:0b:00.0.COMMAND")" 0x0407
+out=$( log_err() { echo "$*"; }; guard_and_load_driver 2>&1 ); rc=$?
+assert_eq "guard refuses to load while a GPU is dirty" "$rc:$MODPROBE_CALLS" "1:0"
+assert_eq "guard says why" "$(grep -c 'not re-enumerated on: 0000:0b:00.0' <<<"$out")" 1
+SETPCI_FAIL_AFTER=-1
+rollback_dirty 2>/dev/null && ok "rollback succeeds once setpci works" || fail "rollback"
+assert_eq "register restored" "$(read_size_index 0000:0b:00.0):${#GPU_DIRTY[@]}" "8:0"
 
 echo "negotiation: 6.x-like kernel"
 RULE=6x; REENUM_CALLS=0; ACHIEVED_PLAN=none
@@ -278,7 +353,7 @@ echo "negotiation: fast path when already satisfied"
 REENUM_CALLS=0; negotiate 2>/dev/null; assert_eq "no re-enumeration needed" "$REENUM_CALLS" 0; assert_eq "plan" "$ACHIEVED_PLAN" all-max
 
 echo "negotiation: unpatched-7.0-like kernel"
-for g in "${GPUS[@]}"; do [[ -n ${GPU_REBAR_CTRL[$g]} ]] && write_size_index "$g" 8 >/dev/null; done
+reset_regs
 RULE=70vanilla; REENUM_CALLS=0; ACHIEVED_PLAN=none
 negotiate 2>/dev/null; rc=$?
 assert_eq "rc" "$rc" 1
@@ -288,7 +363,7 @@ assert_eq "rounds tried: all-max, demote losers, demote their groups, baseline" 
 assert_eq "first dies were demoted to baseline in the end" "${PLAN[0000:0b:00.0]}" 8
 
 echo "negotiation: size-limited window (demote-losers succeeds)"
-for g in "${GPUS[@]}"; do [[ -n ${GPU_REBAR_CTRL[$g]} ]] && write_size_index "$g" 8 >/dev/null; done
+reset_regs
 RULE=budget; REENUM_CALLS=0; ACHIEVED_PLAN=none
 negotiate 2>/dev/null; rc=$?
 assert_eq "rc" "$rc" 0
@@ -322,7 +397,7 @@ check_config "three faults" 1 'MAX_SIZE_INDEX=99' 'MAX_ROUNDS=0' 'FORCE_PLAN=x';
 assert_eq "validation did not leak into the harness" "$MAX_SIZE_INDEX|$MAX_ROUNDS|$FORCE_PLAN" "|8|"
 
 echo "config: cap and exclusion"
-for g in "${GPUS[@]}"; do [[ -n ${GPU_REBAR_CTRL[$g]} ]] && write_size_index "$g" 8 >/dev/null; done
+reset_regs
 MAX_SIZE_INDEX=14; EXCLUDE_BDFS="0000:0e:00.0"
 discover_gpus
 assert_eq "excluded GPU dropped" "${#GPUS[@]}" 6
@@ -332,12 +407,27 @@ assert_eq "cap does not raise a small card" "${GPU_MAX_INDEX[0000:2b:00.0]}" 13
 MAX_SIZE_INDEX=""; EXCLUDE_BDFS=""
 
 echo "bind guard"
-discover_gpus
+discover_gpus; reset_regs
 set_bars 0000:1e:00.0 15 unassigned
 assert_eq "unassigned BARs detected from sysfs" "$(bar_unassigned_list 0000:1e:00.0)" "0 2"
 assert_eq "failed list" "$(failed_gpus | tr '\n' ' ')" "0000:1e:00.0 "
 block_binding 0000:1e:00.0 && assert_eq "override written" "$(cat "${DEVPATH[0000:1e:00.0]}/driver_override")" none
 clear_stale_overrides; assert_eq "override cleared" "$(cat "${DEVPATH[0000:1e:00.0]}/driver_override")" ""
+echo "bind guard: losers fenced off, register reset for the next boot, driver loaded on the rest"
+write_size_index 0000:1e:00.0 15 >/dev/null; mark_group_reenumerated 0000:16:00.0; MODPROBE_CALLS=0
+guard_and_load_driver 2>/dev/null; rc=$?
+assert_eq "guard rc" "$rc" 0
+assert_eq "driver loaded once" "$MODPROBE_CALLS" 1
+assert_eq "loser gets driver_override=none" "$(cat "${DEVPATH[0000:1e:00.0]}/driver_override")" none
+assert_eq "loser not bound" "$([[ -L ${DEVPATH[0000:1e:00.0]}/driver ]] && echo bound || echo unbound)" unbound
+assert_eq "sibling bound" "$([[ -L ${DEVPATH[0000:1b:00.0]}/driver ]] && echo bound || echo unbound)" bound
+assert_eq "loser register reset to baseline for the next boot" "$(read_size_index 0000:1e:00.0)" 8
+assert_eq "decode restored after the reset write" "$(cat "$REG/0000:1e:00.0.COMMAND")" 0x0407
+assert_eq "one GPU blocked" "$GUARD_BLOCKED" 1
+MODPROBE_RC=1; unload_driver; MODPROBE_CALLS=0
+guard_and_load_driver 2>/dev/null; rc=$?
+assert_eq "modprobe failure is reported" "$rc:$MODPROBE_CALLS" "1:1"
+MODPROBE_RC=0; unload_driver; clear_stale_overrides; GPU_DIRTY=(); GPU_DIRTY_FROM=()
 
 echo "verification: phase 3 with and without XGMI hives"
 # v6.0 died here when no GPU exposed a hive (the attribute is a directory, so
