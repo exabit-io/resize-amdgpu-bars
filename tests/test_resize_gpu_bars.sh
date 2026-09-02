@@ -8,12 +8,13 @@
 # negotiation can be exercised for kernels that behave like 6.x, like an
 # unpatched 7.0, and like a size-limited window. Nothing real is touched.
 #
-#   ./test_resize_gpu_bars.sh [path/to/resize_gpu_bars.sh]
+#   ./test_resize_gpu_bars.sh path/to/resize_gpu_bars.sh
 set -uo pipefail
-SCRIPT=${1:-/usr/sbin/resize_gpu_bars.sh}
+SCRIPT=${1:?usage: $0 path/to/resize_gpu_bars.sh}
+[[ -r $SCRIPT ]] || { echo "$0: cannot read $SCRIPT" >&2; exit 2; }
 T=$(mktemp -d "${TMPDIR:-/tmp}/rgb-test.XXXXXX"); trap 'rm -rf "$T"' EXIT
-export SYSFS=$T/sys
-STATE_DIR_OVERRIDE=$T/run
+export RESIZE_GPU_BARS_SYSFS=$T/sys RESIZE_GPU_BARS_STATE_DIR=$T/run
+SYSFS=$RESIZE_GPU_BARS_SYSFS
 PASS=0; FAIL=0
 ok()   { PASS=$((PASS + 1)); echo "  ok   $*"; }
 fail() { FAIL=$((FAIL + 1)); echo "  FAIL $*"; }
@@ -173,7 +174,9 @@ reenumerate() {
     return 0
 }
 
-STATE_DIR=$STATE_DIR_OVERRIDE; mkdir -p "$STATE_DIR"
+mkdir -p "$STATE_DIR"
+# No real waiting in the fake kernel.
+REMOVE_SETTLE=0; BIND_SETTLE=0; RESCAN_POLL=0; PROBE_POLL=0
 log_info() { :; }; log_ok() { :; }; log_warn() { :; }; log_err() { :; }   # quiet
 
 echo "discovery"

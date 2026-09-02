@@ -79,7 +79,6 @@
 #                         15 = 32 GB, 14 = 16 GB, 13 = 8 GB). Empty = device max.
 #   EXCLUDE_BDFS="0000:0b:00.0 ..."   GPUs to leave completely alone.
 #   FORCE_PLAN=baseline   skip negotiation: all-max | baseline
-#   GPU_DRIVER=amdgpu     driver to load after the resize
 #   MODPROBE_TIMEOUT=180  seconds (must stay below the unit's TimeoutStartSec)
 #   PROBE_WAIT=60         seconds to wait for every unguarded GPU to bind
 #
@@ -95,22 +94,47 @@
 set -euo pipefail
 shopt -s nullglob
 
-VERSION="6.1"
-SYSFS=${SYSFS:-/sys}           # overridable so a test harness can use a fake tree
+# Sysfs strings and tool output are parsed byte-for-byte; a localised
+# lspci or a user PATH with a wrapper setpci must not change the result.
+export LC_ALL=C
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+
+VERSION="7.0"
+DRIVER=amdgpu                  # the only driver this tool knows (scope decision)
 CONFIG_FILE=/etc/default/resize-gpu-bars
-STATE_DIR=/run/resize-gpu-bars
 LOCK_FILE=/run/lock/resize-gpu-bars.lock
 SERVICE_NAME=resize-gpu-bars.service
+
+# Test-only overrides (used by tests/test_resize_gpu_bars.sh, never in
+# production): RESIZE_GPU_BARS_SYSFS points at a fake sysfs tree and
+# RESIZE_GPU_BARS_STATE_DIR at a scratch runtime directory.
+SYSFS=${RESIZE_GPU_BARS_SYSFS:-/sys}
+STATE_DIR=${RESIZE_GPU_BARS_STATE_DIR:-/run/resize-gpu-bars}
 
 # Defaults, overridable from CONFIG_FILE.
 MAX_SIZE_INDEX=""
 EXCLUDE_BDFS=""
 FORCE_PLAN=""
-GPU_DRIVER=amdgpu
 MODPROBE_TIMEOUT=180
 PROBE_WAIT=60
 RESCAN_WAIT=30
 MAX_ROUNDS=8
+
+# Named delays (seconds). REMOVE_SETTLE lets the hot-unplug of a removed
+# subtree finish before its bus is rescanned; BIND_SETTLE lets an unbind
+# complete before the device's registers are written; RESCAN_POLL is the
+# interval at which we look for removed devices to come back (and the grace
+# period once they have, so late-appearing functions are seen too);
+# PROBE_POLL is the interval at which driver binding is checked.
+REMOVE_SETTLE=2
+BIND_SETTLE=1
+RESCAN_POLL=1
+PROBE_POLL=1
+# At verification a GPU that vanished is given REAPPEAR_WAIT seconds to come
+# back (something else re-enumerated the bus under us) and REAPPEAR_SETTLE
+# seconds after that for its driver to catch up.
+REAPPEAR_WAIT=10
+REAPPEAR_SETTLE=5
 
 # shellcheck disable=SC1090
 [[ -r $CONFIG_FILE ]] && source "$CONFIG_FILE"
@@ -141,6 +165,7 @@ declare -A GROUP_MEMBERS      # root -> space-separated GPU BDFs
 declare -A GROUP_RESCAN       # root -> sysfs rescan file to use
 declare -A GROUP_CHAIN        # root -> bridges between root and the GPUs
 ACHIEVED_PLAN="none"
+LAST_LOSERS=""                # GPUs that lost a BAR in the last rejected plan
 
 # ---------------------------------------------------------------------------
 # Small helpers
@@ -148,7 +173,7 @@ ACHIEVED_PLAN="none"
 sysdev() { echo "$SYSFS/bus/pci/devices/$1"; }
 # Not "lsmod | grep -q": with pipefail, grep closing the pipe early makes the
 # pipeline fail and the module looks unloaded (latent bug in v5.x).
-driver_loaded() { [[ -d $SYSFS/module/$GPU_DRIVER ]]; }
+driver_loaded() { [[ -d $SYSFS/module/$DRIVER ]]; }
 attr()   { cat "$(sysdev "$1")/$2" 2>/dev/null || true; }
 is_bridge() { [[ $(attr "$1" class) == 0x0604* ]]; }
 present()   { [[ -e $(sysdev "$1") ]]; }
@@ -491,7 +516,7 @@ reenumerate() {
             log_warn "  $r not present (already removed?)"
         fi
     done
-    sleep 2
+    sleep "$REMOVE_SETTLE"
     for r in "${GROUPS_LIST[@]}"; do
         [[ $r == none:* ]] && continue
         if [[ -w ${GROUP_RESCAN[$r]} ]]; then
@@ -507,10 +532,10 @@ reenumerate() {
         for g in "${GPUS[@]}"; do present "$g" && found=$((found + 1)); done
         if (( found == want )); then
             log_ok "  All $want GPU devices present after ${waited}s."
-            sleep 1
+            sleep "$RESCAN_POLL"
             return 0
         fi
-        sleep 1
+        sleep "$RESCAN_POLL"
     done
     log_err "  Only $found/$want GPU devices reappeared after ${RESCAN_WAIT}s."
     # A GPU that came back on a different BDF would look like "missing"; say so.
@@ -599,7 +624,7 @@ negotiate() {
         (( round >= MAX_ROUNDS )) && { log_warn "Giving up after $round rounds."; break; }
         # Demote the losers; if a loser is not resizable (or already at
         # baseline) demote everything in its group instead.
-        local demoted=0 r
+        local demoted=0 r m
         for g in $LAST_LOSERS; do
             if [[ -n ${GPU_REBAR_CTRL[$g]:-} && ${PLAN[$g]} != "${GPU_BASE_INDEX[$g]}" ]]; then
                 PLAN[$g]=${GPU_BASE_INDEX[$g]}; demoted=$((demoted + 1))
@@ -615,6 +640,7 @@ negotiate() {
         log_info "Falling back: $name"
     done
     ACHIEVED_PLAN="none"
+LAST_LOSERS=""                # GPUs that lost a BAR in the last rejected plan
     log_err "Every plan failed to produce a fully-assigned BAR layout."
     return 1
 }
@@ -640,7 +666,7 @@ wait_for_probe() {
             if (( nodes == last )); then stable=$((stable + 1)); else stable=0; last=$nodes; fi
             (( stable >= 3 )) && { log_ok "  All unguarded GPUs bound; KFD topology stable ($nodes nodes)."; return 0; }
         fi
-        sleep 1
+        sleep "$PROBE_POLL"
     done
     log_warn "  Probe wait of ${PROBE_WAIT}s elapsed with $pending GPU(s) still unbound."
     return 0
@@ -651,7 +677,7 @@ guard_and_load_driver() {
     bad=$(failed_gpus)
     if [[ -n $bad ]]; then
         log_warn "───────────────────────────────────────────────────────"
-        log_warn " Some GPUs still have an unassigned memory BAR. $GPU_DRIVER"
+        log_warn " Some GPUs still have an unassigned memory BAR. $DRIVER"
         log_warn " misdetects such a device as an SR-IOV virtual function"
         log_warn " and hangs forever in the mailbox handshake, so binding"
         log_warn " is being blocked on those devices."
@@ -660,7 +686,7 @@ guard_and_load_driver() {
             if block_binding "$g"; then
                 log_ok "  Blocked driver binding on $g (driver_override=none)"; blocked=$((blocked + 1))
             else
-                log_err "  COULD NOT block binding on $g — refusing to load $GPU_DRIVER."
+                log_err "  COULD NOT block binding on $g — refusing to load $DRIVER."
                 log_err "  Loading it now would hang the boot. Reboot to recover."; return 1
             fi
             if [[ -n ${GPU_REBAR_CTRL[$g]:-} ]]; then
@@ -672,23 +698,23 @@ guard_and_load_driver() {
     fi
 
     if driver_loaded; then
-        log_info "$GPU_DRIVER already loaded; re-binding the unguarded GPUs..."
+        log_info "$DRIVER already loaded; re-binding the unguarded GPUs..."
         for g in "${GPUS[@]}"; do
             [[ $(attr "$g" driver_override) == none ]] && continue
-            [[ -L $(sysdev "$g")/driver ]] || echo "$g" > "$SYSFS/bus/pci/drivers/$GPU_DRIVER/bind" 2>/dev/null || true
+            [[ -L $(sysdev "$g")/driver ]] || echo "$g" > "$SYSFS/bus/pci/drivers/$DRIVER/bind" 2>/dev/null || true
         done
     else
-        log_info "Loading $GPU_DRIVER (timeout ${MODPROBE_TIMEOUT}s so boot can never wedge)..."
-        if timeout --signal=TERM --kill-after=30 "$MODPROBE_TIMEOUT" modprobe "$GPU_DRIVER"; then
-            log_ok "$GPU_DRIVER loaded."
+        log_info "Loading $DRIVER (timeout ${MODPROBE_TIMEOUT}s so boot can never wedge)..."
+        if timeout --signal=TERM --kill-after=30 "$MODPROBE_TIMEOUT" modprobe "$DRIVER"; then
+            log_ok "$DRIVER loaded."
         else
             local rc=$?
             if (( rc == 124 || rc == 137 )); then
-                log_err "modprobe $GPU_DRIVER TIMED OUT after ${MODPROBE_TIMEOUT}s."
+                log_err "modprobe $DRIVER TIMED OUT after ${MODPROBE_TIMEOUT}s."
                 log_err "A GPU is very likely stuck in the SR-IOV mailbox path."
                 log_err "Check: dmesg | grep 'trn=2 ACK'   — recovery needs a reboot."
             else
-                log_err "modprobe $GPU_DRIVER failed (exit $rc)."
+                log_err "modprobe $DRIVER failed (exit $rc)."
             fi
             return 1
         fi
@@ -706,16 +732,17 @@ guard_and_load_driver() {
 # Phases
 # ---------------------------------------------------------------------------
 preflight() {
+    local t
     (( EUID == 0 )) || { log_err "This script must be run as root."; exit 1; }
     for t in lspci setpci flock numfmt; do command -v "$t" >/dev/null || { log_err "$t not found (apt install pciutils util-linux coreutils)"; exit 1; }; done
     if grep -qw "pci=realloc" /proc/cmdline; then log_ok "Kernel booted with pci=realloc"
     else log_err "Kernel NOT booted with pci=realloc — required for bridge window sizing."; exit 1; fi
     log_info "Kernel $(uname -r); script v$VERSION; config ${CONFIG_FILE}$( [[ -r $CONFIG_FILE ]] || echo ' (absent, defaults)')"
     if driver_loaded; then
-        log_warn "$GPU_DRIVER is already loaded — GPUs will be unbound before the resize (double-init path)."
+        log_warn "$DRIVER is already loaded — GPUs will be unbound before the resize (double-init path)."
         log_info "Tip: /etc/modprobe.d/amdgpu-blacklist.conf avoids this."
     else
-        log_ok "$GPU_DRIVER not loaded (blacklist active) — clean single-init path."
+        log_ok "$DRIVER not loaded (blacklist active) — clean single-init path."
     fi
 }
 
@@ -733,7 +760,7 @@ phase1_diagnose() {
 phase2_resize() {
     banner "Phase 2: BAR resize (plan negotiation)"
     log_info "Step 1: clearing stale driver_override values..."; clear_stale_overrides
-    log_info "Step 2: unbinding drivers from GPU functions..."; unbind_gpu_functions; sleep 1
+    log_info "Step 2: unbinding drivers from GPU functions..."; unbind_gpu_functions; sleep "$BIND_SETTLE"
     negotiate
 }
 
@@ -745,10 +772,10 @@ phase3_verify() {
         log_info "--- GPU $g  ${GPU_NAME[$g]:-} ---"
         if ! present "$g"; then
             local waited=0
-            while ! present "$g" && (( waited < 10 )); do sleep 1; waited=$((waited + 1)); done
+            while ! present "$g" && (( waited < REAPPEAR_WAIT )); do sleep 1; waited=$((waited + 1)); done
             if ! present "$g"; then log_err "  Device not present!"; missing=$((missing + 1)); continue; fi
             log_warn "  Device reappeared after ${waited}s: something else re-enumerated the bus during this run."
-            sleep 5
+            sleep "$REAPPEAR_SETTLE"
         fi
         b0=$(bar0_bytes "$g")
         log_info "  BAR0: $(human_bytes "$b0")"
@@ -807,7 +834,7 @@ phase3_verify() {
 
 do_revert() {
     banner "Revert: every GPU back to baseline"
-    clear_stale_overrides; unbind_gpu_functions; sleep 1
+    clear_stale_overrides; unbind_gpu_functions; sleep "$BIND_SETTLE"
     plan_baseline
     if try_plan baseline; then ACHIEVED_PLAN=baseline; else ACHIEVED_PLAN=none; log_warn "Baseline re-enumeration incomplete."; fi
     banner "Loading driver"
