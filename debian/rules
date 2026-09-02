@@ -1,12 +1,53 @@
 #!/usr/bin/make -f
+# Until the upstream rename lands the script may still be called
+# resize_gpu_bars.sh in the source tree; either way it is installed as
+# usr/sbin/resize-gpu-bars (the 7.0 layout).
+SCRIPT := $(firstword $(wildcard resize-gpu-bars resize_gpu_bars.sh))
+PKGDIR := debian/resize-gpu-bars
+# Man pages are generated from scdoc sources in man/; tolerate their absence.
+MANSRC := $(wildcard man/*.scd)
+MANPAGES := $(MANSRC:.scd=)
+
 %:
 	dh $@
 
-override_dh_installsystemd:
-	# Never start the unit from the package: starting it unbinds and re-initialises
-	# every AMD GPU on a live box (it ran on the 6.0 -> 6.1 upgrade because the
-	# unit was in the failed state). It is enabled and runs at the next boot.
-	dh_installsystemd --no-restart-after-upgrade --no-stop-on-upgrade --no-start
+# The script's VERSION= must equal the changelog version (6.1 once shipped
+# inside package 6.2). Epoch and Debian revision are stripped first.
+.PHONY: check-version
+check-version:
+	@test -n "$(SCRIPT)" || { echo "debian/rules: no resize-gpu-bars script in the source tree" >&2; exit 1; }
+	@sv=$$(grep -m1 -E '^(readonly |declare -r )?VERSION=' $(SCRIPT) | sed -E "s/^(readonly |declare -r )?VERSION=['\"]?([^'\" ]*)['\"]?.*/\2/"); \
+	 cv=$$(dpkg-parsechangelog -SVersion | sed -E 's/^[0-9]+://; s/-[^-]*$$//'); \
+	 if [ "$$sv" != "$$cv" ]; then \
+	   echo "debian/rules: $(SCRIPT) says VERSION=$$sv but debian/changelog says $$cv; fix one of them" >&2; \
+	   exit 1; \
+	 fi; \
+	 echo "debian/rules: script version $$sv matches changelog"
+
+man/%: man/%.scd
+	scdoc < $< > $@
+
+override_dh_auto_build: check-version $(MANPAGES)
+
+override_dh_auto_clean:
+	rm -f $(MANPAGES)
 
 override_dh_auto_test:
-	bash tests/test_resize_gpu_bars.sh ./resize_gpu_bars.sh >/dev/null
+	bash tests/test_resize_gpu_bars.sh ./$(SCRIPT)
+	[ ! -x tests/style/run.sh ] || bash tests/style/run.sh
+
+override_dh_auto_install:
+	install -D -m 0755 $(SCRIPT) $(PKGDIR)/usr/sbin/resize-gpu-bars
+
+# The compat name resize_gpu_bars.sh gets a man page link once the real page
+# exists (a plain symlink: dh_installman would read ".sh" as a language code).
+override_dh_installman:
+	dh_installman $(MANPAGES)
+	[ ! -e $(PKGDIR)/usr/share/man/man8/resize-gpu-bars.8 ] || ln -s resize-gpu-bars.8 $(PKGDIR)/usr/share/man/man8/resize_gpu_bars.sh.8
+
+override_dh_installsystemd:
+	# Never start the unit from the package: starting it unbinds and
+	# re-initialises every AMD GPU on a live box (it ran on the 6.0 -> 6.1
+	# upgrade because the unit was in the failed state). It is enabled and
+	# runs at the next boot.
+	dh_installsystemd --no-restart-after-upgrade --no-stop-on-upgrade --no-start
