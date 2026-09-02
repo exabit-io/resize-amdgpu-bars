@@ -203,6 +203,12 @@ assert_eq "audio is ours" "$(is_gpu_function 0000:0e:00.1 && echo yes || echo no
 assert_eq "expected mem BARs" "$(gpu_mem_bars 0000:0b:00.0)" "0 2 5"
 assert_eq "nothing unassigned at start" "$(failed_gpus | wc -l)" 0
 
+echo "units"
+assert_eq "index 15 is 32GiB" "$(size_index_to_human 15)" 32GiB
+assert_eq "index 8 is 256MiB" "$(size_index_to_human 8)" 256MiB
+assert_eq "human_bytes agrees with size_index_to_human" "$(human_bytes $(( 32 << 30 )))" "$(size_index_to_human 15)"
+assert_eq "human_bytes 0 is unassigned" "$(human_bytes 0)" unassigned
+
 echo "size register write"
 write_size_index 0000:0b:00.0 15 && ok "write index 15" || fail "write index 15"
 assert_eq "readback" "$(read_size_index 0000:0b:00.0)" 15
@@ -284,7 +290,7 @@ for g in 0000:1b:00.0 0000:1e:00.0; do mkdir -p "${DEVPATH[$g]}/xgmi_hive_info";
 out=$(run_phase3); rc=$?
 assert_eq "two hives: rc" "$rc" 0
 assert_eq "two hives: per-GPU hive id" "$(grep -c 'XGMI hive: 111' <<<"$out")" 2
-assert_eq "two hives: summary" "$(sed -n 's/.*XGMI hives (id×members): //p' <<<"$out")" "111×2 222×2 "
+assert_eq "two hives: summary" "$(sed -n 's/.*XGMI hives (id x members): //p' <<<"$out")" "111x2 222x2 "
 for g in "${GPUS[@]}"; do rm -f "${DEVPATH[$g]}/driver"; done
 
 echo
