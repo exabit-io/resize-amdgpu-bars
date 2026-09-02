@@ -1,0 +1,96 @@
+# CI for resize-gpu-bars (to-do 9.3): lint, offline harness, style fixture,
+# Debian package build with lintian, deb kept as a build artifact.
+#
+# Nothing here touches PCI: the harness runs against a fake sysfs tree
+# (RESIZE_GPU_BARS_SYSFS / SYSFS override) and the package build only
+# installs files. Boot tests stay manual (CONTRIBUTING.md, 9.4).
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  shellcheck:
+    name: shellcheck -S style
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends shellcheck
+          shellcheck --version
+      - name: Script, check tool and harness
+        # Must be clean; to-do 7.7 fixes or documents every note.
+        run: >-
+          shellcheck -S style
+          resize_gpu_bars.sh
+          resize-gpu-bars-check
+          tests/test_resize_gpu_bars.sh
+      - name: Tools and the vendored style fixture
+        # -x -P SCRIPTDIR: the fixture's "# shellcheck source=" directives
+        # resolve relative to the script (same flags as its upstream).
+        run: >-
+          shellcheck -x -P SCRIPTDIR -S style
+          tools/experiment-resource0-resize.sh
+          tests/style/run.sh
+          tests/style/t02_style.sh
+          tests/style/lib.sh
+          tests/style/mask.sh
+
+  harness:
+    name: offline harness
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run the harness against the script
+        run: bash tests/test_resize_gpu_bars.sh ./resize_gpu_bars.sh
+
+  style:
+    name: bash style fixture
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck (the fixture runs it when present)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends shellcheck
+      - name: tests/style/run.sh resize_gpu_bars.sh
+        # Allowed to fail until the section 7 formatting pass lands
+        # (to-do 7.1-7.8: tabs, 80 columns, shellcheck -S style clean).
+        # Drop continue-on-error in that commit.
+        continue-on-error: true
+        run: tests/style/run.sh resize_gpu_bars.sh
+
+  package:
+    name: dpkg-buildpackage + lintian
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential debhelper scdoc lintian shellcheck
+      - name: Build the binary package
+        # dh_auto_test runs the harness again as part of the build.
+        run: dpkg-buildpackage -us -uc -b
+      - name: Collect the build products
+        run: |
+          mkdir -p dist
+          mv ../resize-gpu-bars_*.deb ../resize-gpu-bars_*.buildinfo \
+             ../resize-gpu-bars_*.changes dist/
+          ls -l dist
+      - name: lintian
+        # Fails on any warning. Today that is no-manual-page (twice) and
+        # script-with-language-extension; to-do 6.1 (man pages) and 5.1
+        # (the resize-gpu-bars binary name) remove them.
+        run: lintian -I --fail-on warning dist/resize-gpu-bars_*.deb
+      - name: Upload the deb
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: resize-gpu-bars-deb
+          path: dist/
+          if-no-files-found: error
