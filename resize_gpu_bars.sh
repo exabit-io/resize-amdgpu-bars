@@ -104,15 +104,16 @@ PATH=/usr/sbin:/usr/bin:/sbin:/bin
 
 VERSION="7.0"
 DRIVER=amdgpu                  # the only driver this tool knows (scope decision)
-CONFIG_FILE=/etc/default/resize-gpu-bars
 LOCK_FILE=/run/lock/resize-gpu-bars.lock
 SERVICE_NAME=resize-gpu-bars.service
 
 # Test-only overrides (used by tests/test_resize_gpu_bars.sh, never in
-# production): RESIZE_GPU_BARS_SYSFS points at a fake sysfs tree and
-# RESIZE_GPU_BARS_STATE_DIR at a scratch runtime directory.
+# production): RESIZE_GPU_BARS_SYSFS points at a fake sysfs tree,
+# RESIZE_GPU_BARS_STATE_DIR at a scratch runtime directory and
+# RESIZE_GPU_BARS_CONFIG at a configuration file other than the system one.
 SYSFS=${RESIZE_GPU_BARS_SYSFS:-/sys}
 STATE_DIR=${RESIZE_GPU_BARS_STATE_DIR:-/run/resize-gpu-bars}
+CONFIG_FILE=${RESIZE_GPU_BARS_CONFIG:-/etc/default/resize-gpu-bars}
 
 # Defaults, overridable from CONFIG_FILE.
 MAX_SIZE_INDEX=""
@@ -139,11 +140,6 @@ PROBE_POLL=1
 REAPPEAR_WAIT=10
 REAPPEAR_SETTLE=5
 
-if [[ -r $CONFIG_FILE ]]; then
-    # shellcheck disable=SC1090
-    source "$CONFIG_FILE"
-fi
-
 # Colour only for a person at a terminal (https://no-color.org): the journal
 # is read by machines and by people with journalctl, not by a TTY.
 if [[ -t 2 && -z ${NO_COLOR:-} ]]; then
@@ -158,6 +154,37 @@ log_ok()    { printf '%s[OK]%s    %s\n' "$GREEN" "$NC" "$*" >&2; }
 log_warn()  { printf '%s[WARN]%s  %s\n' "$YELLOW" "$NC" "$*" >&2; }
 log_err()   { printf '%s[ERROR]%s %s\n' "$RED" "$NC" "$*" >&2; }
 banner()    { printf '== %s ==\n' "$*" >&2; }
+
+# validate_config -- checks the values that CONFIG_FILE may have set; prints
+# one error line per bad variable, naming it and the file; returns 0 when
+# everything is usable, 1 otherwise (the caller exits before touching anything)
+validate_config() {
+    local bad=0 v b
+    if [[ -n $MAX_SIZE_INDEX ]] && ! { [[ $MAX_SIZE_INDEX =~ ^[0-9]+$ ]] && (( 10#$MAX_SIZE_INDEX <= 43 )); }; then
+        log_err "MAX_SIZE_INDEX='$MAX_SIZE_INDEX' in $CONFIG_FILE: must be empty or an integer 0..43"; bad=1
+    fi
+    for v in MODPROBE_TIMEOUT PROBE_WAIT RESCAN_WAIT MAX_ROUNDS; do
+        [[ ${!v} =~ ^[1-9][0-9]*$ ]] || { log_err "$v='${!v}' in $CONFIG_FILE: must be a positive integer"; bad=1; }
+    done
+    for b in $EXCLUDE_BDFS; do
+        [[ $b =~ ^[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$ ]] || { log_err "EXCLUDE_BDFS entry '$b' in $CONFIG_FILE: must be a PCI address like 0000:0b:00.0"; bad=1; }
+    done
+    case $FORCE_PLAN in
+        ""|all-max|baseline) ;;
+        *) log_err "FORCE_PLAN='$FORCE_PLAN' in $CONFIG_FILE: must be empty, all-max or baseline"; bad=1 ;;
+    esac
+    return "$bad"
+}
+# load_config -- sources CONFIG_FILE when present and validates the result;
+# returns validate_config's status
+load_config() {
+    if [[ -r $CONFIG_FILE ]]; then
+        # shellcheck disable=SC1090
+        source "$CONFIG_FILE" || { log_err "Cannot source $CONFIG_FILE"; return 1; }
+    fi
+    validate_config
+}
+load_config || exit 1
 
 # ---------------------------------------------------------------------------
 # Discovery state (filled by discover_gpus). All keyed by GPU BDF.
@@ -631,8 +658,6 @@ negotiate() {
     case "$FORCE_PLAN" in
         baseline) plan_baseline; try_plan baseline && { ACHIEVED_PLAN=baseline; return 0; }; ACHIEVED_PLAN=none; return 1 ;;
         all-max)  plan_all_max;  try_plan all-max  && { ACHIEVED_PLAN=all-max;  return 0; }; ACHIEVED_PLAN=none; return 1 ;;
-        "") ;;
-        *) log_warn "Unknown FORCE_PLAN='$FORCE_PLAN'; ignoring" ;;
     esac
 
     plan_all_max

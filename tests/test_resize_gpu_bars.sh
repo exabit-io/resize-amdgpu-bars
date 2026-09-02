@@ -13,7 +13,7 @@ set -uo pipefail
 SCRIPT=${1:?usage: $0 path/to/resize_gpu_bars.sh}
 [[ -r $SCRIPT ]] || { echo "$0: cannot read $SCRIPT" >&2; exit 2; }
 T=$(mktemp -d "${TMPDIR:-/tmp}/rgb-test.XXXXXX"); trap 'rm -rf "$T"' EXIT
-export RESIZE_GPU_BARS_SYSFS=$T/sys RESIZE_GPU_BARS_STATE_DIR=$T/run
+export RESIZE_GPU_BARS_SYSFS=$T/sys RESIZE_GPU_BARS_STATE_DIR=$T/run RESIZE_GPU_BARS_CONFIG=/dev/null
 SYSFS=$RESIZE_GPU_BARS_SYSFS
 PASS=0; FAIL=0
 ok()   { PASS=$((PASS + 1)); echo "  ok   $*"; }
@@ -249,6 +249,28 @@ assert_eq "first die large" "${PLAN[0000:0b:00.0]}" 15
 assert_eq "second die baseline" "${PLAN[0000:0e:00.0]}" 8
 assert_eq "single card untouched by the demotion" "${PLAN[0000:2b:00.0]}" 13
 assert_eq "no failures" "$(failed_gpus | wc -l)" 0
+
+echo "config: validation"
+check_config() {   # check_config <label> <expected rc> <assignments...>; messages land in $T/cfg.out
+    local label=$1 want=$2 rc; shift 2
+    ( for a in "$@"; do eval "$a"; done; log_err() { echo "$*"; }; validate_config ) > "$T/cfg.out" 2>&1; rc=$?
+    assert_eq "$label: rc" "$rc" "$want"
+}
+check_config "defaults valid" 0; assert_eq "defaults: no message" "$(cat "$T/cfg.out")" ""
+check_config "MAX_SIZE_INDEX=44" 1 'MAX_SIZE_INDEX=44'; assert_eq "MAX_SIZE_INDEX message names variable and file" "$(grep -c "MAX_SIZE_INDEX='44' in /dev/null" "$T/cfg.out")" 1
+check_config "MAX_SIZE_INDEX=abc" 1 'MAX_SIZE_INDEX=abc'
+check_config "MAX_SIZE_INDEX=15 ok" 0 'MAX_SIZE_INDEX=15'
+check_config "MAX_SIZE_INDEX=0 ok" 0 'MAX_SIZE_INDEX=0'
+check_config "MODPROBE_TIMEOUT=0" 1 'MODPROBE_TIMEOUT=0'
+check_config "PROBE_WAIT=-5" 1 'PROBE_WAIT=-5'
+check_config "RESCAN_WAIT empty" 1 'RESCAN_WAIT='
+check_config "MAX_ROUNDS=8x" 1 'MAX_ROUNDS=8x'
+check_config "EXCLUDE_BDFS bad entry" 1 'EXCLUDE_BDFS="0000:0b:00.0 0b:00.0"'; assert_eq "EXCLUDE_BDFS message names the entry" "$(grep -c "EXCLUDE_BDFS entry '0b:00.0'" "$T/cfg.out")" 1
+check_config "EXCLUDE_BDFS two good entries" 0 'EXCLUDE_BDFS="0000:0b:00.0 0000:1e:00.0"'
+check_config "FORCE_PLAN=first-large" 1 'FORCE_PLAN=first-large'
+check_config "FORCE_PLAN=baseline ok" 0 'FORCE_PLAN=baseline'
+check_config "three faults" 1 'MAX_SIZE_INDEX=99' 'MAX_ROUNDS=0' 'FORCE_PLAN=x'; assert_eq "one line per fault" "$(wc -l < "$T/cfg.out")" 3
+assert_eq "validation did not leak into the harness" "$MAX_SIZE_INDEX|$MAX_ROUNDS|$FORCE_PLAN" "|8|"
 
 echo "config: cap and exclusion"
 for g in "${GPUS[@]}"; do [[ -n ${GPU_REBAR_CTRL[$g]} ]] && write_size_index "$g" 8 >/dev/null; done
