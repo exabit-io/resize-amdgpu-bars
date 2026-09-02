@@ -207,6 +207,7 @@ GROUPS_LIST=()                # unique re-enumeration roots, in order
 declare -A GROUP_MEMBERS      # root -> space-separated GPU BDFs
 declare -A GROUP_RESCAN       # root -> sysfs rescan file to use
 declare -A GROUP_CHAIN        # root -> bridges between root and the GPUs
+ACTIVE_GROUPS=()              # groups the current plan attempt has to touch
 ACHIEVED_PLAN="none"
 LAST_LOSERS=""                # GPUs that lost a BAR in the last rejected plan
 GUARD_BLOCKED=0               # GPUs the bind guard fenced off in this run
@@ -222,6 +223,9 @@ declare -A GPU_DECODE_OFF     # "1" while we hold memory decode disabled around 
 # Small helpers
 # ---------------------------------------------------------------------------
 sysdev() { echo "$SYSFS/bus/pci/devices/$1"; }
+# sysfs_write PATH VALUE -- writes VALUE to a sysfs attribute; returns the
+# write's status (the test harness replaces this to emulate the kernel)
+sysfs_write() { [[ -w $1 ]] && echo "$2" > "$1"; } 2>/dev/null
 # The module directory in sysfs, not "lsmod | grep": no pipeline to misread.
 driver_loaded() { [[ -d $SYSFS/module/$DRIVER ]]; }
 attr()   { cat "$(sysdev "$1")/$2" 2>/dev/null || true; }
@@ -661,45 +665,87 @@ plan_baseline() { local g; for g in $(resizable_gpus); do PLAN[$g]=${GPU_BASE_IN
 plan_is_baseline() { local g; for g in $(resizable_gpus); do [[ ${PLAN[$g]} == "${GPU_BASE_INDEX[$g]}" ]] || return 1; done; }
 describe_plan() { local g out=""; for g in $(resizable_gpus); do out+="  $g=$(size_index_to_human "${PLAN[$g]}")"; done; echo "$out"; }
 
-unbind_gpu_functions() {
+# group_needs_work ROOT -- true when the current plan has to touch ROOT: a
+# member is missing, has an unassigned memory BAR, or is not at the planned
+# size (register and assigned BAR0 both)
+group_needs_work() {
+    local g
+    for g in ${GROUP_MEMBERS[$1]}; do
+        present "$g" || return 0
+        [[ -n $(bar_unassigned_list "$g") ]] && return 0
+        [[ -n ${GPU_REBAR_CTRL[$g]} ]] || continue
+        [[ $(read_size_index "$g") == "${PLAN[$g]}" ]] || return 0
+        (( $(bar0_bytes "$g") == (1 << (PLAN[$g] + 20)) )) || return 0
+    done
+    return 1
+}
+# plan_active_groups -- fills ACTIVE_GROUPS with the groups the current plan
+# has to touch; returns 0 when there is at least one
+plan_active_groups() {
+    local r
+    ACTIVE_GROUPS=()
+    for r in "${GROUPS_LIST[@]}"; do group_needs_work "$r" && ACTIVE_GROUPS+=("$r"); done
+    (( ${#ACTIVE_GROUPS[@]} > 0 ))
+}
+
+# unbind_group_functions ROOT -- unbinds every driver from every function
+# (audio included) of ROOT's member GPUs, because the subtree is about to be
+# removed or the GPU resized in place; counts the unbinds in UNBOUND
+UNBOUND=0
+unbind_group_functions() {
     local g f drv
-    for g in "${GPUS[@]}"; do
+    for g in ${GROUP_MEMBERS[$1]}; do
         for f in ${GPU_FUNCS[$g]}; do
             [[ -L $(sysdev "$f")/driver ]] || continue
             drv=$(basename "$(readlink "$(sysdev "$f")/driver")")
-            if echo "$f" > "$SYSFS/bus/pci/drivers/$drv/unbind" 2>/dev/null; then log_ok "  Unbound $drv from $f"
-            else log_warn "  Could not unbind $drv from $f"; fi
+            if sysfs_write "$SYSFS/bus/pci/drivers/$drv/unbind" "$f"; then
+                log_ok "  Unbound $drv from $f"; UNBOUND=$((UNBOUND + 1))
+            else
+                log_warn "  Could not unbind $drv from $f"
+            fi
         done
     done
     return 0
 }
+# unbind_active_groups -- unbinds only the GPUs the plan changes and their
+# group members; a GPU that keeps its size (no ReBAR, excluded, already
+# there) keeps its driver and its audio
+unbind_active_groups() {
+    local r
+    UNBOUND=0
+    for r in "${ACTIVE_GROUPS[@]}"; do unbind_group_functions "$r"; done
+    (( UNBOUND > 0 )) && sleep "$BIND_SETTLE"
+    return 0
+}
 
-# Remove each group's root and rescan its bus; wait for the GPUs to return.
-reenumerate() {
-    local r g waited found want=${#GPUS[@]}
-    for r in "${GROUPS_LIST[@]}"; do
-        [[ $r == none:* ]] && continue
-        if present "$r"; then
-            if echo 1 > "$(sysdev "$r")/remove" 2>/dev/null; then log_ok "  Removed subtree under $r"; mark_group_reenumerated "$r"
-            else log_err "  FAILED to remove $r"; return 1; fi
-        else
-            log_warn "  $r not present (already removed?)"
-        fi
-    done
-    sleep "$REMOVE_SETTLE"
-    for r in "${GROUPS_LIST[@]}"; do
-        [[ $r == none:* ]] && continue
-        if [[ -w ${GROUP_RESCAN[$r]} ]]; then
-            log_info "  Rescanning ${GROUP_RESCAN[$r]}"
-            echo 1 > "${GROUP_RESCAN[$r]}"
-        else
-            log_warn "  ${GROUP_RESCAN[$r]} not writable; falling back to a global rescan"
-            echo 1 > "$SYSFS/bus/pci/rescan"
-        fi
-    done
+# remove_group ROOT -- removes ROOT's subtree from the kernel's view so the
+# rescan re-assigns it from scratch; returns the write's status
+remove_group() {
+    local r=$1
+    if ! present "$r"; then log_warn "  $r not present (already removed?)"; return 0; fi
+    if sysfs_write "$(sysdev "$r")/remove" 1; then
+        log_ok "  Removed subtree under $r"; mark_group_reenumerated "$r"; return 0
+    fi
+    log_err "  FAILED to remove $r"
+    return 1
+}
+# rescan_group ROOT -- rescans the bus above ROOT so the kernel re-enumerates
+# its subtree; never the global /sys/bus/pci/rescan, which would re-probe
+# every hot-pluggable device on the machine; returns the write's status
+rescan_group() {
+    local r=$1 f=${GROUP_RESCAN[$1]}
+    if [[ ! -w $f ]]; then log_err "  $f is not writable; cannot re-enumerate $r"; return 1; fi
+    log_info "  Rescanning $f"
+    if ! sysfs_write "$f" 1; then log_err "  Rescan via $f failed"; return 1; fi
+    return 0
+}
+# wait_for_gpus BDF... -- waits up to RESCAN_WAIT seconds for every listed
+# GPU to be present again; returns 0 when all are
+wait_for_gpus() {
+    local waited found g want=$#
     for (( waited = 1; waited <= RESCAN_WAIT; waited++ )); do
         found=0
-        for g in "${GPUS[@]}"; do present "$g" && found=$((found + 1)); done
+        for g in "$@"; do present "$g" && found=$((found + 1)); done
         if (( found == want )); then
             log_ok "  All $want GPU devices present after ${waited}s."
             sleep "$RESCAN_POLL"
@@ -711,8 +757,29 @@ reenumerate() {
     # A GPU that came back on a different BDF would look like "missing"; say so.
     local now=0 d
     for d in "$SYSFS"/bus/pci/devices/*; do [[ $(attr "$(basename "$d")" vendor) == 0x1002 && $(attr "$(basename "$d")" class) == 0x03* ]] && now=$((now + 1)); done
-    (( now != want )) || log_warn "  $now AMD GPUs are present under different addresses; re-run the script."
+    (( now != ${#GPUS[@]} )) || log_warn "  $now AMD GPUs are present under different addresses; re-run the script."
     return 1
+}
+# reenumerate -- removes and rescans every active switched group and waits
+# for its GPUs; a group whose remove or rescan fails is left alone (its GPUs
+# become this attempt's losers); returns 0 when every group came back
+reenumerate() {
+    local r g rc=0 rescan=() expected=()
+    for r in "${ACTIVE_GROUPS[@]}"; do
+        [[ $r == none:* ]] && continue
+        if remove_group "$r"; then rescan+=("$r"); else rc=1; fi
+    done
+    (( ${#rescan[@]} > 0 )) || return "$rc"
+    sleep "$REMOVE_SETTLE"
+    for r in "${rescan[@]}"; do
+        if rescan_group "$r"; then
+            for g in ${GROUP_MEMBERS[$r]}; do expected+=("$g"); done
+        else
+            rc=1; log_err "  GPUs of $r stay absent until the next boot: ${GROUP_MEMBERS[$r]}"
+        fi
+    done
+    if (( ${#expected[@]} > 0 )); then wait_for_gpus "${expected[@]}" || rc=1; fi
+    return "$rc"
 }
 
 apply_plan() {
@@ -732,26 +799,21 @@ apply_plan() {
     return 0
 }
 
-# Fast path: nothing to change and every BAR assigned, skip re-enumeration.
-plan_already_satisfied() {
-    local g
-    for g in $(resizable_gpus); do [[ $(read_size_index "$g") == "${PLAN[$g]}" ]] || return 1; done
-    for g in "${GPUS[@]}"; do
-        (( $(bar0_bytes "$g") == (1 << (${PLAN[$g]:-0} + 20)) )) || [[ -z ${GPU_REBAR_CTRL[$g]} ]] || return 1
-    done
-    [[ -z $(failed_gpus) ]]
-}
-
+# try_plan NAME -- unbinds, programs and re-enumerates the groups the plan
+# changes, then verifies every GPU's BARs; returns 0 when every memory BAR
+# is assigned at the planned size, 1 otherwise with the losers in LAST_LOSERS
 try_plan() {
     local name=$1
     log_info "Applying plan '$name':$(describe_plan)"
-    if plan_already_satisfied; then
+    if ! plan_active_groups; then
         log_ok "Plan '$name' is already in effect (BARs assigned at the requested sizes); no re-enumeration needed."
         return 0
     fi
+    log_info "  Groups to re-enumerate: ${ACTIVE_GROUPS[*]}"
+    unbind_active_groups
     apply_plan || return 1
     log_info "  Re-enumerating GPU subtrees so the kernel re-sizes the bridge windows..."
-    reenumerate || return 1
+    reenumerate || log_warn "  Re-enumeration incomplete; verifying what is there"
     log_info "  Resulting BAR assignment:"; report_bars
     local bad g; bad=$(failed_gpus | tr '\n' ' ')
     # A BAR that is assigned but not at the requested size means the ReBAR
@@ -939,8 +1001,7 @@ phase1_diagnose() {
 
 phase2_resize() {
     banner "Phase 2: BAR resize (plan negotiation)"
-    log_info "Step 1: clearing stale driver_override values..."; clear_stale_overrides
-    log_info "Step 2: unbinding drivers from GPU functions..."; unbind_gpu_functions; sleep "$BIND_SETTLE"
+    log_info "Clearing stale driver_override values..."; clear_stale_overrides
     negotiate
 }
 
@@ -1010,7 +1071,7 @@ phase3_verify() {
 
 do_revert() {
     banner "Revert: every GPU back to baseline"
-    clear_stale_overrides; unbind_gpu_functions; sleep "$BIND_SETTLE"
+    clear_stale_overrides
     plan_baseline
     if try_plan baseline; then ACHIEVED_PLAN=baseline; else ACHIEVED_PLAN=none; log_warn "Baseline re-enumeration incomplete."; fi
     banner "Loading driver"

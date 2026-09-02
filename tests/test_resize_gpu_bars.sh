@@ -196,34 +196,57 @@ export -f lspci setpci timeout modprobe 2>/dev/null
 build_tree
 # shellcheck disable=SC1090
 source "$SCRIPT"; set +e
-# The kernel: apply a RULE to decide which GPUs get their BARs after rescan.
+# The kernel. The script's own reenumerate runs; the two sysfs steps it takes
+# per group are replaced: remove_group always succeeds (the fake devices stay
+# in place), rescan_group applies a RULE to decide which GPUs of that group
+# get their BARs, or fails for the groups listed in RESCAN_FAIL_GROUPS.
 #   6x        every GPU fits at any size
 #   70vanilla in every group with 2+ GPUs the second GPU never fits
 #   budget    a group fits only if the sum of its BAR0 sizes is <= 40 GB
-RULE=6x; REENUM_CALLS=0
-reenumerate() {
-    local r g i sum n
-    for r in "${GROUPS_LIST[@]}"; do
-        n=0; sum=0
-        for g in ${GROUP_MEMBERS[$r]}; do
-            i=$(read_size_index "$g"); (( i < 0 )) && i=8
-            sum=$(( sum + (1 << (i + 20)) )); n=$((n + 1))
-        done
-        n=0
-        for g in ${GROUP_MEMBERS[$r]}; do
-            i=$(read_size_index "$g"); (( i < 0 )) && i=8
-            n=$((n + 1))
-            case $RULE in
-                6x)        set_bars "$g" "$i" assigned ;;
-                70vanilla) if (( n >= 2 )); then set_bars "$g" "$i" unassigned; else set_bars "$g" "$i" assigned; fi ;;
-                budget)    if (( sum <= 40 * 1073741824 )); then set_bars "$g" "$i" assigned; else (( n >= 2 )) && set_bars "$g" "$i" unassigned || set_bars "$g" "$i" assigned; fi ;;
-            esac
-        done
-        mark_group_reenumerated "$r"
+RULE=6x; REENUM_CALLS=0; RESCAN_FAIL_GROUPS=""
+copy_function() { eval "$2() $(declare -f "$1" | sed 1d)"; }   # copy_function <from> <to>
+copy_function reenumerate orig_reenumerate
+copy_function rescan_group orig_rescan_group
+copy_function sysfs_write orig_sysfs_write
+reenumerate() { REENUM_CALLS=$((REENUM_CALLS + 1)); orig_reenumerate; }
+remove_group() { mark_group_reenumerated "$1"; return 0; }
+rescan_group() {
+    local r=$1 g i sum=0 n=0
+    [[ " $RESCAN_FAIL_GROUPS " == *" $r "* ]] && return 1
+    for g in ${GROUP_MEMBERS[$r]}; do
+        i=$(read_size_index "$g"); (( i < 0 )) && i=8
+        sum=$(( sum + (1 << (i + 20)) ))
     done
-    REENUM_CALLS=$((REENUM_CALLS + 1))
+    for g in ${GROUP_MEMBERS[$r]}; do
+        i=$(read_size_index "$g"); (( i < 0 )) && i=8
+        n=$((n + 1))
+        case $RULE in
+            6x)        set_bars "$g" "$i" assigned ;;
+            70vanilla) if (( n >= 2 )); then set_bars "$g" "$i" unassigned; else set_bars "$g" "$i" assigned; fi ;;
+            budget)    if (( sum <= 40 * 1073741824 )); then set_bars "$g" "$i" assigned; else (( n >= 2 )) && set_bars "$g" "$i" unassigned || set_bars "$g" "$i" assigned; fi ;;
+        esac
+    done
     return 0
 }
+# sysfs writes: an unbind drops the device's driver link; everything else is
+# a real write into the fake tree.
+sysfs_write() {
+    case $1 in
+        */unbind) rm -f "${DEVPATH[$2]}/driver"; return 0 ;;
+    esac
+    orig_sysfs_write "$@"
+}
+bind_all() {   # every GPU function gets a driver link (amdgpu / snd_hda_intel)
+    local g f
+    mkdir -p "$SYSFS/bus/pci/drivers/snd_hda_intel"
+    for g in "${GPUS[@]}"; do
+        for f in ${GPU_FUNCS[$g]}; do
+            if [[ $f == "$g" ]]; then ln -sfn "$SYSFS/bus/pci/drivers/amdgpu" "${DEVPATH[$f]}/driver"
+            else ln -sfn "$SYSFS/bus/pci/drivers/snd_hda_intel" "${DEVPATH[$f]}/driver"; fi
+        done
+    done
+}
+bound() { [[ -L ${DEVPATH[$1]}/driver ]] && basename "$(readlink "${DEVPATH[$1]}/driver")" || echo none; }
 
 mkdir -p "$STATE_DIR"
 # reset_regs: every register back at index 8 with the BARs assigned there and
@@ -373,6 +396,40 @@ assert_eq "first die large" "${PLAN[0000:0b:00.0]}" 15
 assert_eq "second die baseline" "${PLAN[0000:0e:00.0]}" 8
 assert_eq "single card untouched by the demotion" "${PLAN[0000:2b:00.0]}" 13
 assert_eq "no failures" "$(failed_gpus | wc -l)" 0
+
+echo "re-enumeration is group-local and return-checked"
+assert_eq "no global rescan anywhere in the code" "$(grep -v '^[[:space:]]*#' "$SCRIPT" | grep -c 'bus/pci/rescan')" 0
+GROUP_RESCAN[0000:16:00.0]=$T/nonexistent/rescan
+orig_rescan_group 0000:16:00.0 2>/dev/null; assert_eq "missing rescan file is a failure" "$?" 1
+GROUP_RESCAN[0000:16:00.0]=$T
+orig_rescan_group 0000:16:00.0 2>/dev/null; assert_eq "failed write (a directory) is a failure" "$?" 1
+GROUP_RESCAN[0000:16:00.0]=$SYSFS/devices/pci0000:16/pci_bus/0000:16/rescan
+orig_rescan_group 0000:16:00.0 2>/dev/null; assert_eq "writable rescan file succeeds" "$?:$(cat "$SYSFS/devices/pci0000:16/pci_bus/0000:16/rescan")" "0:1"
+reset_regs; plan_all_max; RULE=6x; RESCAN_FAIL_GROUPS="0000:16:00.0"
+try_plan all-max 2>/dev/null; rc=$?
+assert_eq "a group whose rescan fails rejects the plan" "$rc" 1
+assert_eq "its GPUs are the losers" "$LAST_LOSERS" "0000:1b:00.0 0000:1e:00.0 "
+assert_eq "the other group was re-enumerated normally" "$(bar0_bytes 0000:0b:00.0)" $(( 32 << 30 ))
+RESCAN_FAIL_GROUPS=""; reset_regs
+
+echo "only GPUs with a size change, and their group members, are unbound"
+bind_all; RULE=6x; ACHIEVED_PLAN=none
+negotiate 2>/dev/null
+assert_eq "plan" "$ACHIEVED_PLAN" all-max
+assert_eq "resized die unbound" "$(bound 0000:0b:00.0)" none
+assert_eq "its audio function unbound" "$(bound 0000:0b:00.1)" none
+assert_eq "GPU without ReBAR keeps amdgpu" "$(bound 0000:3b:00.0)" amdgpu
+bind_all; REENUM_CALLS=0
+negotiate 2>/dev/null
+assert_eq "already in effect: nothing re-enumerated" "$REENUM_CALLS" 0
+assert_eq "already in effect: nothing unbound" "$(bound 0000:0b:00.0),$(bound 0000:0b:00.1),$(bound 0000:2b:00.0)" "amdgpu,snd_hda_intel,amdgpu"
+write_size_index 0000:2b:00.0 8 >/dev/null; set_bars 0000:2b:00.0 8 assigned; GPU_DIRTY=(); GPU_DIRTY_FROM=()
+negotiate 2>/dev/null
+assert_eq "one card changed: only its group unbound" "$(bound 0000:2b:00.0),$(bound 0000:2b:00.1),$(bound 0000:0b:00.0),$(bound 0000:0e:00.0),$(bound 0000:3b:00.0)" "none,none,amdgpu,amdgpu,amdgpu"
+assert_eq "one card changed: only its group re-enumerated" "${ACTIVE_GROUPS[*]}" "0000:2a:00.0"
+assert_eq "one card changed: back at 8GiB" "$(bar0_bytes 0000:2b:00.0)" $(( 8 << 30 ))
+unload_driver; for g in "${GPUS[@]}"; do for f in ${GPU_FUNCS[$g]}; do rm -f "${DEVPATH[$f]}/driver"; done; done
+reset_regs
 
 echo "config: validation"
 check_config() {   # check_config <label> <expected rc> <assignments...>; messages land in $T/cfg.out
