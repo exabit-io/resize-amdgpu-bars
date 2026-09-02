@@ -318,9 +318,11 @@ bar0_bytes() {
 }
 
 # ---------------------------------------------------------------------------
-# Resizable BAR capability access (setpci; the kernel's resourceN_resize
-# write would try to re-assign in place, which is exactly what fails on the
-# shared-window kernels, so we program the register and re-enumerate).
+# Resizable BAR capability access. Behind a switch we program the register
+# with setpci and re-enumerate the subtree, because the kernel's in-place
+# resize (resourceN_resize) cannot grow the bridge windows above the GPU.
+# A GPU directly on a root bus has no subtree to remove, and there the
+# in-place path is the right one: the kernel re-assigns the BAR itself.
 # ---------------------------------------------------------------------------
 find_rebar_cap() {   # prints the ext-cap offset (hex, no 0x) or nothing
     lspci -s "$1" -vv 2>/dev/null | sed -n 's/.*Capabilities: \[\([0-9a-f]*\) v[0-9]*\] Physical Resizable BAR.*/\1/p' | head -1
@@ -392,6 +394,15 @@ write_size_index() {
     fi
     restore_decode "$bdf" || log_warn "  $bdf: could not re-enable memory decode"
     return "$rc"
+}
+# resize_in_place BDF INDEX -- asks the kernel to resize BAR0 to INDEX via
+# resourceN_resize (the device must be unbound); the kernel reprograms the
+# register and re-assigns the BAR, or restores the old size when it cannot,
+# so nothing becomes dirty; returns 0 when BAR0 is assigned at the new size
+resize_in_place() {
+    local bdf=$1 want=$2
+    sysfs_write "$(sysdev "$bdf")/resource0_resize" "$want" || return 1
+    (( $(bar0_bytes "$bdf") == (1 << (want + 20)) ))
 }
 # rollback_dirty -- writes every dirty GPU's register back to the index the
 # kernel's assignment corresponds to; returns 0 when no GPU is left dirty
@@ -607,7 +618,7 @@ report_discovery() {
     log_info "GPUs found: ${#GPUS[@]}   re-enumeration groups: ${#GROUPS_LIST[@]}"
     for r in "${GROUPS_LIST[@]}"; do
         if [[ $r == none:* ]]; then
-            log_warn "Group (no removable root): ${GROUP_MEMBERS[$r]} sits directly on a root bus; only in-place BAR writes are possible for it."
+            log_info "Group (no removable root): ${GROUP_MEMBERS[$r]} sits directly on a root bus; resized in place via resource0_resize"
         else
             log_info "Group root $r  (rescan via ${GROUP_RESCAN[$r]})"
             for b in ${GROUP_CHAIN[$r]}; do
@@ -782,12 +793,22 @@ reenumerate() {
     return "$rc"
 }
 
+# apply_plan -- programs every resizable GPU whose size index differs from
+# the plan: in place for a GPU on a root bus (a failure there is that GPU
+# losing the plan, verified later), by register write for the rest (a
+# failure there rolls back and aborts the attempt); returns 0 or 1
 apply_plan() {
     local g want have
     for g in $(resizable_gpus); do
         want=${PLAN[$g]}; have=$(read_size_index "$g")
         if [[ $have == "$want" ]]; then
             log_info "  $g already at index $want ($(size_index_to_human "$want"))"
+        elif [[ -z ${GPU_ROOT[$g]} ]]; then
+            if resize_in_place "$g" "$want"; then
+                log_ok "  $g resized in place, index $have -> $want ($(size_index_to_human "$want"))"
+            else
+                log_warn "  $g could not be resized in place to $(size_index_to_human "$want"); the kernel kept $(human_bytes "$(bar0_bytes "$g")")"
+            fi
         elif write_size_index "$g" "$want"; then
             log_ok "  $g size index $have -> $want ($(size_index_to_human "$want"))"
         else

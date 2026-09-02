@@ -3,7 +3,7 @@
 #
 # Builds a fake sysfs tree (two Vega II Duo cards on separate root ports, a
 # W5500X-like single GPU without a PLX chain, a 580X-like GPU without ReBAR,
-# a radeon-only card, a Thunderbolt controller and a Mellanox NIC with SR-IOV
+# a GPU directly on a root bus, a radeon-only card, a Thunderbolt controller and a Mellanox NIC with SR-IOV
 # VFs), stubs lspci / setpci and the amdgpu alias table, and replaces the
 # kernel's re-enumeration with a rule so the plan negotiation can be
 # exercised for kernels that behave like 6.x, like an unpatched 7.0, and
@@ -117,6 +117,10 @@ build_tree() {
     r=$(root_bus 0000:3a)
     mkdev 0000:3a:00.0 "$r" 0x8086 $BR
     mkdev 0000:3b:00.0 "${DEVPATH[0000:3a:00.0]}" 0x1002 $GPU gpu-norebar
+    # A GPU directly on a root bus (no root port above it to remove)
+    r=$(root_bus 0000:60)
+    mkdev 0000:60:00.0 "$r" 0x1002 $GPU gpu
+    mkdev 0000:60:00.1 "$r" 0x1002 $AUD
     # A radeon-driver card (Caicos-like): AMD, class 03, not amdgpu's
     r=$(root_bus 0000:70)
     mkdev 0000:70:00.0 "$r" 0x8086 $BR
@@ -228,11 +232,21 @@ rescan_group() {
     done
     return 0
 }
-# sysfs writes: an unbind drops the device's driver link; everything else is
-# a real write into the fake tree.
+# sysfs writes: an unbind drops the device's driver link; a resource0_resize
+# write is the kernel's in-place resize (reprograms the register and
+# re-assigns BAR0, or fails leaving everything as it was when INPLACE_FAIL
+# is set); everything else is a real write into the fake tree.
+INPLACE_FAIL=0; INPLACE_WRITES=0
 sysfs_write() {
+    local bdf
     case $1 in
         */unbind) rm -f "${DEVPATH[$2]}/driver"; return 0 ;;
+        */resource0_resize)
+            INPLACE_WRITES=$((INPLACE_WRITES + 1))
+            (( INPLACE_FAIL )) && return 1
+            bdf=$(basename "$(dirname "$1")")
+            printf '0x%016x\n' $(( $2 << 8 )) > "$REG/$bdf.0x208.l"
+            set_bars "$bdf" "$2" assigned; return 0 ;;
     esac
     orig_sysfs_write "$@"
 }
@@ -264,7 +278,7 @@ log_info() { :; }; log_ok() { :; }; log_warn() { :; }; log_err() { :; }   # quie
 echo "discovery"
 out=$( log_info() { echo "$*"; }; discover_gpus 2>&1 )
 discover_gpus
-assert_eq "gpu count" "${#GPUS[@]}" 7
+assert_eq "gpu count" "${#GPUS[@]}" 8
 assert_eq "radeon card refused" "$(grep -c '0000:71:00.0 .*not an amdgpu device, skipped' <<<"$out")" 1
 assert_eq "radeon card never in GPUS" "$(printf '%s\n' "${GPUS[@]}" | grep -c 0000:71:00.0)" 0
 assert_eq "radeon card is not ours" "$(is_gpu_function 0000:71:00.0 && echo yes || echo no)" no
@@ -274,8 +288,9 @@ assert_eq "match: class catch-all" "$(match_modalias 'pci:v00001002d*sv*sd*bc03s
 assert_eq "no match: other device id" "$(match_modalias 'pci:v00001002d000066A3sv*sd*bc*sc*i*' pci:v00001002d00006779sv0000106Bsd00000203bc03sc00i00 && echo yes || echo no)" no
 assert_eq "no match: other class" "$(match_modalias 'pci:v00001002d*sv*sd*bc03sc00i00*' pci:v00001002d000066A3sv0000106Bsd00000203bc04sc03i00 && echo yes || echo no)" no
 out=$( ALIAS_FILE=/dev/null; log_warn() { echo "$*"; }; discover_gpus 2>&1; echo "gpus=${#GPUS[@]}" )
-assert_eq "no alias table: warns and accepts every AMD display device" "$(grep -c 'No PCI alias table' <<<"$out"):$(grep -o 'gpus=[0-9]*' <<<"$out")" "1:gpus=8"
-assert_eq "group count" "${#GROUPS_LIST[@]}" 5
+assert_eq "no alias table: warns and accepts every AMD display device" "$(grep -c 'No PCI alias table' <<<"$out"):$(grep -o 'gpus=[0-9]*' <<<"$out")" "1:gpus=9"
+assert_eq "group count" "${#GROUPS_LIST[@]}" 6
+assert_eq "root-bus GPU has no removable root" "${GPU_ROOT[0000:60:00.0]}|${GROUP_MEMBERS[none:0000:60:00.0]}|${GROUP_RESCAN[none:0000:60:00.0]}" "|0000:60:00.0|"
 assert_eq "root of 0e:00.0" "${GPU_ROOT[0000:0e:00.0]}" "0000:06:00.0"
 assert_eq "root of 1b:00.0" "${GPU_ROOT[0000:1b:00.0]}" "0000:16:00.0"
 assert_eq "root of single card" "${GPU_ROOT[0000:2b:00.0]}" "0000:2a:00.0"
@@ -290,7 +305,7 @@ assert_eq "max index Vega" "${GPU_MAX_INDEX[0000:0b:00.0]}" 15
 assert_eq "max index W5500X-like" "${GPU_MAX_INDEX[0000:2b:00.0]}" 13
 assert_eq "baseline index" "${GPU_BASE_INDEX[0000:0b:00.0]}" 8
 assert_eq "no-rebar GPU has no ctrl" "${GPU_REBAR_CTRL[0000:3b:00.0]}" ""
-assert_eq "resizable count" "$(resizable_gpus | wc -l)" 6
+assert_eq "resizable count" "$(resizable_gpus | wc -l)" 7
 assert_eq "mellanox is not ours" "$(is_gpu_function 0000:41:00.2 && echo yes || echo no)" no
 assert_eq "audio is ours" "$(is_gpu_function 0000:0e:00.1 && echo yes || echo no)" yes
 assert_eq "expected mem BARs" "$(gpu_mem_bars 0000:0b:00.0)" "0 2 5"
@@ -457,7 +472,7 @@ echo "config: cap and exclusion"
 reset_regs
 MAX_SIZE_INDEX=14; EXCLUDE_BDFS="0000:0e:00.0"
 discover_gpus
-assert_eq "excluded GPU dropped" "${#GPUS[@]}" 6
+assert_eq "excluded GPU dropped" "${#GPUS[@]}" 7
 assert_eq "excluded GPU makes its root impure" "${GPU_ROOT[0000:0b:00.0]}" "0000:08:08.0"
 assert_eq "cap applied" "${GPU_MAX_INDEX[0000:0b:00.0]}" 14
 assert_eq "cap does not raise a small card" "${GPU_MAX_INDEX[0000:2b:00.0]}" 13
@@ -486,6 +501,28 @@ guard_and_load_driver 2>/dev/null; rc=$?
 assert_eq "modprobe failure is reported" "$rc:$MODPROBE_CALLS" "1:1"
 MODPROBE_RC=0; unload_driver; clear_stale_overrides; GPU_DIRTY=(); GPU_DIRTY_FROM=()
 
+echo "root-bus GPU: resized in place by the kernel, never rescanned"
+reset_regs; plan_all_max; RULE=6x; INPLACE_WRITES=0; REENUM_CALLS=0
+before=$SETPCI_CTRL_WRITES
+try_plan all-max 2>/dev/null; rc=$?
+assert_eq "plan verified" "$rc" 0
+assert_eq "root-bus GPU at 32GiB" "$(bar0_bytes 0000:60:00.0)" $(( 32 << 30 ))
+assert_eq "register reflects the kernel's write" "$(read_size_index 0000:60:00.0)" 15
+assert_eq "one resource0_resize write" "$INPLACE_WRITES" 1
+assert_eq "root-bus GPU never dirty" "${GPU_DIRTY[0000:60:00.0]:-}" ""
+assert_eq "root-bus GPU was unbound for the in-place resize" "$([[ none:0000:60:00.0 == "${ACTIVE_GROUPS[-1]}" ]] && echo yes || echo no)" yes
+assert_eq "switched GPUs still use the register (6 of 7 writes)" "$(( SETPCI_CTRL_WRITES - before ))" 6
+reset_regs; plan_all_max; INPLACE_FAIL=1; INPLACE_WRITES=0
+try_plan all-max 2>/dev/null; rc=$?
+assert_eq "in-place failure rejects the plan for that GPU" "$rc" 1
+assert_eq "it is the only loser" "$LAST_LOSERS" "0000:60:00.0 "
+assert_eq "kernel kept 256MiB" "$(bar0_bytes 0000:60:00.0)" $(( 256 << 20 ))
+assert_eq "the others were resized" "$(bar0_bytes 0000:0b:00.0)" $(( 32 << 30 ))
+reset_regs; ACHIEVED_PLAN=none
+negotiate 2>/dev/null
+assert_eq "negotiation demotes it and succeeds" "$ACHIEVED_PLAN:${PLAN[0000:60:00.0]}:${PLAN[0000:0b:00.0]}" "demote-losers-2:8:15"
+INPLACE_FAIL=0; reset_regs
+
 echo "verification: phase 3 with and without XGMI hives"
 # v6.0 died here when no GPU exposed a hive (the attribute is a directory, so
 # the per-GPU read was empty and "grep -v" exited 1 under errexit+pipefail).
@@ -502,7 +539,7 @@ rm -f "$STATE_DIR/summary"
 out=$(run_phase3); rc=$?
 assert_eq "no hive anywhere: rc" "$rc" 0
 assert_eq "no hive anywhere: reached SUCCESS" "$(grep -c 'SUCCESS:' <<<"$out")" 1
-assert_eq "no hive anywhere: summary written" "$(sed -n 's/ kernel=.*//p' "$STATE_DIR/summary" 2>/dev/null)" "plan=all-max gpus=7 large=7 baseline=0 driverless=0 unassigned=0 missing=0 kfd_nodes=0"
+assert_eq "no hive anywhere: summary written" "$(sed -n 's/ kernel=.*//p' "$STATE_DIR/summary" 2>/dev/null)" "plan=all-max gpus=8 large=8 baseline=0 driverless=0 unassigned=0 missing=0 kfd_nodes=0"
 for g in 0000:0b:00.0 0000:0e:00.0; do mkdir -p "${DEVPATH[$g]}/xgmi_hive_info"; echo 111 > "${DEVPATH[$g]}/xgmi_hive_info/xgmi_hive_id"; done
 for g in 0000:1b:00.0 0000:1e:00.0; do mkdir -p "${DEVPATH[$g]}/xgmi_hive_info"; echo 222 > "${DEVPATH[$g]}/xgmi_hive_info/xgmi_hive_id"; done
 out=$(run_phase3); rc=$?
