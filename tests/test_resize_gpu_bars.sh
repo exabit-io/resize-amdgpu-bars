@@ -264,6 +264,12 @@ bind_all() {   # every GPU function gets a driver link (amdgpu / snd_hda_intel)
 bound() { [[ -L ${DEVPATH[$1]}/driver ]] && basename "$(readlink "${DEVPATH[$1]}/driver")" || echo none; }
 
 mkdir -p "$STATE_DIR"
+echo "sourced state"
+# Every map must be usable before anything assigned to it: under set -u a
+# "declare -A X" without "=()" is an unbound variable (the EXIT trap of a
+# bare "diagnose" run died on exactly that).
+assert_eq "maps usable while empty under set -u" "$( ( echo "${#GPU_DIRTY[@]}${#GPU_DIRTY_FROM[@]}${#GPU_DECODE_OFF[@]}${#OVERRIDE_SET[@]}${#OVERRIDE_KEEP[@]}${#PLAN[@]}${#GPU_ROOT[@]} ${!GPU_DIRTY[@]} ${!OVERRIDE_SET[@]}" ) 2>&1 )" "0000000  "
+assert_eq "cleanup runs on a pristine state" "$( ( TOUCHED=0; cleanup; echo rc=$? ) 2>&1 )" "rc=0"
 # reset_regs: every register back at index 8 with the BARs assigned there and
 # nothing dirty, the state a fresh boot on this firmware starts from.
 reset_regs() {

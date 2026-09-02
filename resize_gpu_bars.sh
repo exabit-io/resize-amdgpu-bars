@@ -168,20 +168,20 @@ load_config || exit 1
 # Discovery state (filled by discover_gpus). All keyed by GPU BDF.
 # ---------------------------------------------------------------------------
 GPUS=()                       # ordered list of GPU BDFs (domain:bus:dev.fn)
-declare -A GPU_NAME           # lspci short name
-declare -A GPU_FUNCS          # all functions of the same device (GPU + audio ...)
-declare -A GPU_REBAR_CAP      # ReBAR ext-cap offset (hex) or "" if none
-declare -A GPU_REBAR_CTRL     # control register offset for BAR0 (hex) or ""
-declare -A GPU_SUPPORTED      # bitmask of supported size indices for BAR0
-declare -A GPU_MAX_INDEX      # target size index (device max, capped)
-declare -A GPU_BASE_INDEX     # baseline (firmware) size index
-declare -A GPU_CUR_INDEX      # size index currently programmed
-declare -A GPU_ROOT           # re-enumeration root bridge BDF
-declare -A GPU_ROOT_IMPURE    # "1" if the subtree above the root has non-GPU devices
+declare -A GPU_NAME=()           # lspci short name
+declare -A GPU_FUNCS=()          # all functions of the same device (GPU + audio ...)
+declare -A GPU_REBAR_CAP=()      # ReBAR ext-cap offset (hex) or "" if none
+declare -A GPU_REBAR_CTRL=()     # control register offset for BAR0 (hex) or ""
+declare -A GPU_SUPPORTED=()      # bitmask of supported size indices for BAR0
+declare -A GPU_MAX_INDEX=()      # target size index (device max, capped)
+declare -A GPU_BASE_INDEX=()     # baseline (firmware) size index
+declare -A GPU_CUR_INDEX=()      # size index currently programmed
+declare -A GPU_ROOT=()           # re-enumeration root bridge BDF
+declare -A GPU_ROOT_IMPURE=()    # "1" if the subtree above the root has non-GPU devices
 GROUPS_LIST=()                # unique re-enumeration roots, in order
-declare -A GROUP_MEMBERS      # root -> space-separated GPU BDFs
-declare -A GROUP_RESCAN       # root -> sysfs rescan file to use
-declare -A GROUP_CHAIN        # root -> bridges between root and the GPUs
+declare -A GROUP_MEMBERS=()      # root -> space-separated GPU BDFs
+declare -A GROUP_RESCAN=()       # root -> sysfs rescan file to use
+declare -A GROUP_CHAIN=()        # root -> bridges between root and the GPUs
 ACTIVE_GROUPS=()              # groups the current plan attempt has to touch
 ACHIEVED_PLAN="none"
 LAST_LOSERS=""                # GPUs that lost a BAR in the last rejected plan
@@ -191,11 +191,11 @@ VERIFY_DEGRADED=0             # 1 when verification found a driverless, missing 
 # makes the kernel see it. A "dirty" GPU decodes a different aperture size
 # than the kernel assigned; handing it to a driver is what the bind guard
 # exists to prevent, so the guard refuses while any GPU is dirty.
-declare -A GPU_DIRTY          # "1" while a written size index has not been re-enumerated
-declare -A GPU_DIRTY_FROM     # size index the kernel's current assignment corresponds to
-declare -A GPU_DECODE_OFF     # "1" while we hold memory decode disabled around a write
-declare -A OVERRIDE_SET       # functions whose driver_override this run wrote
-declare -A OVERRIDE_KEEP      # ... deliberately, to fence off a BAR-less GPU (left in place)
+declare -A GPU_DIRTY=()          # "1" while a written size index has not been re-enumerated
+declare -A GPU_DIRTY_FROM=()     # size index the kernel's current assignment corresponds to
+declare -A GPU_DECODE_OFF=()     # "1" while we hold memory decode disabled around a write
+declare -A OVERRIDE_SET=()       # functions whose driver_override this run wrote
+declare -A OVERRIDE_KEEP=()      # ... deliberately, to fence off a BAR-less GPU (left in place)
 TOUCHED=0                     # 1 once the run has started changing hardware state
 RUN_COMPLETE=0                # 1 once the run reached its intended end
 CLEANUP_DONE=0
@@ -657,7 +657,7 @@ report_bars() {
 # ---------------------------------------------------------------------------
 # Plan machinery: a plan is an associative array bdf -> size index
 # ---------------------------------------------------------------------------
-declare -A PLAN
+declare -A PLAN=()
 plan_all_max()  { local g; for g in $(resizable_gpus); do PLAN[$g]=${GPU_MAX_INDEX[$g]}; done; }
 plan_baseline() { local g; for g in $(resizable_gpus); do PLAN[$g]=${GPU_BASE_INDEX[$g]}; done; }
 plan_is_baseline() { local g; for g in $(resizable_gpus); do [[ ${PLAN[$g]} == "${GPU_BASE_INDEX[$g]}" ]] || return 1; done; }
