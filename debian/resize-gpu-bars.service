@@ -1,65 +1,103 @@
-# /etc/systemd/system/resize-gpu-bars.service  (v6)
+# resize-gpu-bars.service — installed by the resize-gpu-bars package.
 #
-# Enlarges the Resizable BAR of every AMD GPU it finds (any MPX card mix on a
-# MacPro7,1), re-enumerates only the GPU subtrees so the kernel re-sizes the
-# bridge windows, then loads amdgpu once, behind a bind guard.
+# Enlarges the Resizable BAR of every AMD GPU the amdgpu driver handles,
+# re-enumerates only the all-GPU PCI subtrees (on their own root bus) so the
+# kernel re-sizes the bridge windows above them, then loads amdgpu once,
+# behind a bind guard that never hands the driver a device whose BAR did
+# not come back.
 #
-# PREREQUISITES:
-#   /etc/modprobe.d/amdgpu-blacklist.conf — keeps amdgpu from autoloading
-#   before this service runs (otherwise: double init/teardown, KFD breakage).
+# Needs, both effective from the next boot:
+#   /usr/lib/modprobe.d/resize-gpu-bars.conf   keeps amdgpu from autoloading
+#                                              before this unit has run
+#   pci=realloc on the kernel command line     /etc/default/grub.d/resize-gpu-bars.cfg
 #
-# Installed by the resize-gpu-bars package. Manual install:
-#   cp amdgpu-blacklist.conf /etc/modprobe.d/amdgpu-blacklist.conf
-#   install -m 755 resize_gpu_bars.sh /usr/sbin/resize_gpu_bars.sh
-#   cp resize-gpu-bars.service /etc/systemd/system/
-#   cp resize-gpu-bars.default /etc/default/resize-gpu-bars     # optional
-#   systemctl daemon-reload && systemctl enable resize-gpu-bars.service
-#   update-initramfs -u
+# Exit status: 0 every GPU resized and bound; 2 degraded, the bind guard is
+# holding one or more GPUs back from the driver (counted as success below so
+# boot proceeds on whatever came up; the journal and "resize-gpu-bars status"
+# carry the detail); 1 error.
 #
-# Verify:
-#   journalctl -u resize-gpu-bars.service -b
-#   /usr/sbin/resize_gpu_bars.sh --status
-#   rocminfo
+# Verify:  journalctl -b -u resize-gpu-bars.service
+#          resize-gpu-bars status
 
 [Unit]
-Description=Resize AMD GPU BARs and load amdgpu (MacPro7,1)
+Description=Resizable BAR for AMD GPUs behind PCIe switches
+Documentation=man:resize-gpu-bars(8) man:resize-gpu-bars.conf(5)
 DefaultDependencies=no
 Requires=local-fs.target sysinit.target systemd-udevd.service
 After=sysinit.target local-fs.target systemd-udevd.service systemd-modules-load.service
 Before=display-manager.service graphical.target multi-user.target
-# The script never modprobes a GPU whose BAR failed to assign (driver_override
+# The tool never modprobes a GPU whose BAR failed to assign (driver_override
 # = none first); handing amdgpu such a device hangs the boot in D state.
 Before=modprobe@amdgpu.service
 Wants=systemd-udevd.service
-ConditionPathExists=/usr/sbin/resize_gpu_bars.sh
 FailureAction=none
 
 [Service]
 Type=oneshot
-# Courtesy wait only: the script needs nothing from udev and waits for the GPU
-# nodes itself. applesmc's ~110 s probe failure used to stall a 60 s settle.
-ExecStartPre=-/usr/bin/udevadm settle --timeout=5
-ExecStart=/usr/sbin/resize_gpu_bars.sh --force
+# The tool waits for the GPU sysfs nodes itself; no udevadm settle here (it
+# timed out every boot behind a slow platform driver and the failure line
+# looked like a stalled boot).
+ExecStart=/usr/sbin/resize-gpu-bars resize --force
 RemainAfterExit=yes
+# 2 = degraded (bind guard holding); the boot is not marked failed, and
+# monitoring can still tell it from 0 via ExecMainStatus.
+SuccessExitStatus=2
 # Budget: discovery + up to MAX_ROUNDS re-enumeration cycles (~10 s each) +
 # bounded modprobe (180 s + 30 s kill) + PROBE_WAIT 60 s + margin. Must stay
-# larger than MODPROBE_TIMEOUT + PROBE_WAIT in the script/config.
+# larger than MODPROBE_TIMEOUT + PROBE_WAIT in resize-gpu-bars.conf(5).
 TimeoutStartSec=480
 
+# --- privileges -----------------------------------------------------------
+# CAP_SYS_ADMIN: sysfs unbind/remove/rescan and config-space writes;
+# CAP_SYS_RAWIO: setpci; CAP_SYS_MODULE: modprobe amdgpu.
 CapabilityBoundingSet=CAP_SYS_ADMIN CAP_SYS_RAWIO CAP_DAC_OVERRIDE CAP_SYS_MODULE
 AmbientCapabilities=CAP_SYS_ADMIN CAP_SYS_RAWIO CAP_SYS_MODULE
+NoNewPrivileges=yes
+RestrictSUIDSGID=yes
+UMask=0077
 
-ProtectHome=yes
+# --- file system ----------------------------------------------------------
 ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
 # sysfs for the PCI writes; /run/lock for the instance lock; the runtime
 # directory for per-boot state (expected BAR map, last summary).
 ReadWritePaths=/sys/bus/pci /sys/devices /run/lock
 RuntimeDirectory=resize-gpu-bars
 RuntimeDirectoryPreserve=yes
-PrivateTmp=yes
-NoNewPrivileges=yes
+# Deliberately NOT set: PrivateDevices= (would hide /dev/kfd and /dev/dri,
+# which appear when amdgpu loads and are what the probe wait and the
+# post-load checks look at; it also strips CAP_SYS_RAWIO) and
+# DevicePolicy=closed for the same reason.
+
+# --- kernel ---------------------------------------------------------------
+# Both must stay "no": the tool writes sysfs (ProtectKernelTunables) and
+# loads amdgpu (ProtectKernelModules).
 ProtectKernelTunables=no
 ProtectKernelModules=no
+ProtectKernelLogs=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+
+# --- isolation ------------------------------------------------------------
+PrivateNetwork=yes
+IPAddressDeny=any
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+# Not set: SystemCallFilter=@system-service @module @raw-io (score 2.9 with
+# it). A wrong filter kills this unit with SIGSYS at boot, leaving amdgpu
+# blacklisted and no driver loaded, and it could not be validated on real
+# hardware before this release. Validate read-only, then enable it:
+#   systemd-run --wait --pipe --collect --unit=rgb-sandbox-test \
+#     -p SystemCallFilter='@system-service @module @raw-io' <other [Service]
+#     hardening lines as -p ...> -p ReadWritePaths=/run/resize-gpu-bars \
+#     /usr/sbin/resize-gpu-bars diagnose
 
 StandardOutput=journal+console
 StandardError=journal+console
