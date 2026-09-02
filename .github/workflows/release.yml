@@ -1,0 +1,123 @@
+# Release: on a v* tag, build the Debian package and attach it to the
+# GitHub release for that tag (to-do 9.3). The apt repository is fed from
+# that asset by hand for now; the commented stanza at the end shows the
+# equivalent of the local publish.sh.
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-attach:
+    name: build deb and attach to the release
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential debhelper scdoc lintian shellcheck
+      - name: The tag must match debian/changelog
+        # v7.0 tags version 7.0; a mismatch means the changelog was not
+        # bumped (the 6.2 package shipped a 6.1 script this way, 4.7).
+        run: |
+          tag=${GITHUB_REF_NAME#v}
+          ver=$(dpkg-parsechangelog -S Version)
+          if [ "$tag" != "$ver" ]; then
+            echo "tag v$tag but debian/changelog says $ver" >&2
+            exit 1
+          fi
+      - name: Build the binary package
+        run: dpkg-buildpackage -us -uc -b
+      - name: Collect the build products
+        run: |
+          mkdir -p dist
+          mv ../resize-gpu-bars_*.deb ../resize-gpu-bars_*.buildinfo \
+             ../resize-gpu-bars_*.changes dist/
+          (cd dist && sha256sum -- * > SHA256SUMS)
+          ls -l dist
+      - name: lintian
+        run: lintian -I --fail-on warning dist/resize-gpu-bars_*.deb
+      - name: Create the release if the tag has none, attach the files
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" \
+              --title "$GITHUB_REF_NAME" --notes-from-tag
+          fi
+          gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+      - name: Keep the deb as a workflow artifact too
+        uses: actions/upload-artifact@v4
+        with:
+          name: resize-gpu-bars-deb
+          path: dist/
+          if-no-files-found: error
+
+# --------------------------------------------------------------------------
+# Feeding the apt repository from the release asset (NOT automated yet).
+#
+# The repository used today is a flat, reprepro-free layout maintained by a
+# 40-line publish.sh with apt-ftparchive and a detached-signing GPG key:
+#
+#   pool/main/<package>/<package>_<version>_all.deb
+#   dists/noble/main/binary-amd64/Packages{,.gz,.xz}
+#   dists/noble/{Release,Release.gpg,InRelease}
+#   keys/<repo>.gpg                       public key for clients
+#
+# The equivalent job would be:
+#
+#  publish-apt:
+#    needs: build-and-attach
+#    runs-on: ubuntu-24.04
+#    steps:
+#      - uses: actions/checkout@v4
+#        with:
+#          ref: apt-repo            # a branch (or a separate repository)
+#                                   # holding pool/ and dists/
+#      - name: Fetch the deb from the release
+#        env:
+#          GH_TOKEN: ${{ github.token }}
+#        run: |
+#          gh release download "$GITHUB_REF_NAME" --pattern '*.deb' \
+#            --dir pool/main/resize-gpu-bars
+#      - name: Import the signing key
+#        # A dedicated apt signing key stored as a repository secret; its
+#        # public half is committed as keys/resize-gpu-bars.gpg.
+#        run: |
+#          printf '%s' "${{ secrets.APT_SIGNING_KEY }}" | gpg --batch --import
+#      - name: Index and sign (what publish.sh does)
+#        run: |
+#          bin=dists/noble/main/binary-amd64
+#          mkdir -p "$bin"
+#          apt-ftparchive packages pool > "$bin/Packages"
+#          gzip -9kf "$bin/Packages"
+#          xz -9kf "$bin/Packages"
+#          apt-ftparchive \
+#            -o APT::FTPArchive::Release::Origin="resize-gpu-bars" \
+#            -o APT::FTPArchive::Release::Label="resize-gpu-bars" \
+#            -o APT::FTPArchive::Release::Suite="noble" \
+#            -o APT::FTPArchive::Release::Codename="noble" \
+#            -o APT::FTPArchive::Release::Architectures="amd64" \
+#            -o APT::FTPArchive::Release::Components="main" \
+#            release dists/noble > dists/noble/Release
+#          gpg --batch --yes --detach-sign --armor \
+#            -o dists/noble/Release.gpg dists/noble/Release
+#          gpg --batch --yes --clearsign \
+#            -o dists/noble/InRelease dists/noble/Release
+#      - name: Publish
+#        # Commit pool/ and dists/ back to the apt-repo branch and serve it
+#        # with GitHub Pages, or rsync to the web host that serves
+#        # "deb [signed-by=/etc/apt/keyrings/resize-gpu-bars.gpg]
+#        #  https://HOST/apt noble main".
+#        run: echo "not automated: decide hosting first (9.3 follow-up)"
+#
+# Open before automating: where the repository is hosted (Pages vs. a host
+# of our own), which key signs it (never the maintainer's personal key),
+# and whether the kernel debs (10.3, private repo) stay out of it. They do.
