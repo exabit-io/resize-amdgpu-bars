@@ -262,17 +262,16 @@ assert_eq "failed list" "$(failed_gpus | tr '\n' ' ')" "0000:1e:00.0 "
 block_binding 0000:1e:00.0 && assert_eq "override written" "$(cat "${DEVPATH[0000:1e:00.0]}/driver_override")" none
 clear_stale_overrides; assert_eq "override cleared" "$(cat "${DEVPATH[0000:1e:00.0]}/driver_override")" ""
 
-echo "verification: phase 3 under the unit's set -e -o pipefail"
-# The service runs phase3_verify with errexit+pipefail; v6.0 died there when
-# no GPU exposed an XGMI hive (the attribute is a directory, so the per-GPU
-# read was always empty and grep -v exited 1). Run it the way systemd does.
+echo "verification: phase 3 with and without XGMI hives"
+# v6.0 died here when no GPU exposed a hive (the attribute is a directory, so
+# the per-GPU read was empty and "grep -v" exited 1 under errexit+pipefail).
+# The script no longer uses errexit, but the summary must still come out.
 set_bars 0000:1e:00.0 15 assigned
 discover_gpus
 for g in $(resizable_gpus); do set_bars "$g" "${GPU_MAX_INDEX[$g]}" assigned; done
 for g in "${GPUS[@]}"; do ln -sfn "$SYSFS/bus/pci/drivers/amdgpu" "${DEVPATH[$g]}/driver"; done
-run_phase3() {   # prints the log lines; rc is phase3_verify's under set -e
-    ( set -e -o pipefail
-      log_info() { echo "$*"; }; log_ok() { echo "$*"; }; log_warn() { echo "$*"; }; log_err() { echo "$*"; }
+run_phase3() {   # prints the log lines; rc is phase3_verify's
+    ( log_info() { echo "$*"; }; log_ok() { echo "$*"; }; log_warn() { echo "$*"; }; log_err() { echo "$*"; }
       ACHIEVED_PLAN=all-max; phase3_verify ) 2>/dev/null
 }
 rm -f "$STATE_DIR/summary"

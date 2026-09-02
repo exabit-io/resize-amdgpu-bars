@@ -91,7 +91,10 @@
 #   0 everything at target and bound; 0 with warnings when a plan short of
 #   all-max was needed; 1 on driver-load failure or a refused run.
 
-set -euo pipefail
+# No errexit and no pipefail: both have silently killed this tool before
+# (a "lsmod | grep -q" and an empty "grep -v" pipeline). Every return value
+# that matters is checked explicitly instead.
+set -u
 shopt -s nullglob
 
 # Sysfs strings and tool output are parsed byte-for-byte; a localised
@@ -136,8 +139,10 @@ PROBE_POLL=1
 REAPPEAR_WAIT=10
 REAPPEAR_SETTLE=5
 
-# shellcheck disable=SC1090
-[[ -r $CONFIG_FILE ]] && source "$CONFIG_FILE"
+if [[ -r $CONFIG_FILE ]]; then
+    # shellcheck disable=SC1090
+    source "$CONFIG_FILE"
+fi
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
 log_info()  { echo -e "${CYAN}[INFO]${NC}  $*" >&2; }
@@ -171,8 +176,7 @@ LAST_LOSERS=""                # GPUs that lost a BAR in the last rejected plan
 # Small helpers
 # ---------------------------------------------------------------------------
 sysdev() { echo "$SYSFS/bus/pci/devices/$1"; }
-# Not "lsmod | grep -q": with pipefail, grep closing the pipe early makes the
-# pipeline fail and the module looks unloaded (latent bug in v5.x).
+# The module directory in sysfs, not "lsmod | grep": no pipeline to misread.
 driver_loaded() { [[ -d $SYSFS/module/$DRIVER ]]; }
 attr()   { cat "$(sysdev "$1")/$2" 2>/dev/null || true; }
 is_bridge() { [[ $(attr "$1" class) == 0x0604* ]]; }
@@ -338,7 +342,7 @@ discover_gpus() {
         GPU_SUPPORTED[$bdf]=0
         GPU_MAX_INDEX[$bdf]=-1; GPU_BASE_INDEX[$bdf]=-1; GPU_CUR_INDEX[$bdf]=-1
         if [[ -n ${GPU_REBAR_CAP[$bdf]} ]]; then
-            GPU_REBAR_CTRL[$bdf]=$(find_rebar_ctrl_for_bar0 "$bdf" "${GPU_REBAR_CAP[$bdf]}" || true)
+            GPU_REBAR_CTRL[$bdf]=$(find_rebar_ctrl_for_bar0 "$bdf" "${GPU_REBAR_CAP[$bdf]}")
         fi
         if [[ -n ${GPU_REBAR_CTRL[$bdf]} ]]; then
             GPU_SUPPORTED[$bdf]=$(attr "$bdf" resource0_resize)
@@ -400,6 +404,7 @@ discover_gpus() {
         done
         GROUP_CHAIN[$r]=$(tr ' ' '\n' <<<"${members% }" | sort | tr '\n' ' ')
     done
+    return 0
 }
 
 # A function is "ours" if it is a listed GPU or another function of one.
@@ -502,6 +507,7 @@ unbind_gpu_functions() {
             else log_warn "  Could not unbind $drv from $f"; fi
         done
     done
+    return 0
 }
 
 # Remove each group's root and rescan its bus; wait for the GPUs to return.
@@ -557,6 +563,7 @@ apply_plan() {
             log_err "  $g FAILED to program size index $want"; return 1
         fi
     done
+    return 0
 }
 
 # Fast path: nothing to change and every BAR assigned → skip re-enumeration.
@@ -660,7 +667,7 @@ wait_for_probe() {
             [[ $(attr "$g" driver_override) == none ]] && continue
             [[ -L $(sysdev "$g")/driver ]] || pending=$((pending + 1))
         done
-        nodes=$(find "$SYSFS"/class/kfd/kfd/topology/nodes -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l || true)
+        nodes=$(find "$SYSFS"/class/kfd/kfd/topology/nodes -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)
         if (( pending == 0 )); then
             # Hive/KFD topology keeps changing for a few seconds after bind.
             if (( nodes == last )); then stable=$((stable + 1)); else stable=0; last=$nodes; fi
@@ -802,13 +809,13 @@ phase3_verify() {
     log_info "KFD topology:"
     if [[ -c /dev/kfd ]]; then log_ok "  /dev/kfd present ($(stat -c '%a %U:%G' /dev/kfd 2>/dev/null || echo unknown))"
     else log_warn "  /dev/kfd not found — KFD did not initialize."; fi
-    # "|| true": find exits 1 when KFD never initialized (no topology dir); under
-    # pipefail + errexit that would abort the script here.
-    local nodes; nodes=$(find "$SYSFS"/class/kfd/kfd/topology/nodes -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l || true)
+    # find exits 1 when KFD never initialized (no topology dir): wc still
+    # prints 0, which is the answer we want.
+    local nodes; nodes=$(find "$SYSFS"/class/kfd/kfd/topology/nodes -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)
     log_info "  KFD topology nodes: $nodes (includes 1 CPU node)"
-    # awk 'NF' instead of grep -v: grep exits 1 when no GPU has a hive, which
-    # under pipefail + errexit would abort the script here (v6.0 bug).
-    local hives; hives=$(for g in "${GPUS[@]}"; do attr "$g" xgmi_hive_info/xgmi_hive_id; done | awk 'NF' | sort | uniq -c | awk '{printf "%s×%s ", $2, $1}' || true)
+    # The hive id lives in a directory (xgmi_hive_info/xgmi_hive_id); GPUs
+    # without a hive contribute an empty line that awk 'NF' drops.
+    local hives; hives=$(for g in "${GPUS[@]}"; do attr "$g" xgmi_hive_info/xgmi_hive_id; done | awk 'NF' | sort | uniq -c | awk '{printf "%s×%s ", $2, $1}')
     [[ -n $hives ]] && log_info "  XGMI hives (id×members): $hives"
 
     echo "" >&2
@@ -820,7 +827,8 @@ phase3_verify() {
     log_info "═══════════════════════════════════════════════════════"
     mkdir -p "$STATE_DIR"
     printf 'plan=%s gpus=%d large=%d baseline=%d driverless=%d unassigned=%d missing=%d kfd_nodes=%d kernel=%s\n' \
-        "$ACHIEVED_PLAN" "$total" "$large" "$baseline" "$driverless" "$unassigned" "$missing" "$nodes" "$(uname -r)" > "$STATE_DIR/summary"
+        "$ACHIEVED_PLAN" "$total" "$large" "$baseline" "$driverless" "$unassigned" "$missing" "$nodes" "$(uname -r)" > "$STATE_DIR/summary" \
+        || log_warn "Could not write $STATE_DIR/summary"
     (( driverless > 0 )) && log_warn "Some GPUs have no driver. See notes above."
     (( missing > 0 ))    && log_err "$missing GPU(s) were missing from sysfs at verification time."
     if (( large == total && driverless == 0 && missing == 0 && unassigned == 0 )); then
@@ -830,6 +838,7 @@ phase3_verify() {
         log_info "undersizes the shared bridge window (see header). Kernels 6.8–6.17 and a"
         log_info "patched 7.0 fit everything; unpatched 7.0 does not."
     fi
+    return 0
 }
 
 do_revert() {
@@ -872,7 +881,7 @@ main() {
     # One instance at a time; a manual run under the boot-time service would
     # re-enumerate the bus underneath it and make both reports wrong.
     mkdir -p "$(dirname "$LOCK_FILE")"
-    exec 9>"$LOCK_FILE"
+    if ! exec 9>"$LOCK_FILE"; then log_err "Cannot open $LOCK_FILE"; exit 1; fi
     if ! flock -n 9; then log_err "Another instance holds $LOCK_FILE. Watch it: journalctl -u $SERVICE_NAME -b -f"; exit 1; fi
 
     phase1_diagnose || exit 0
@@ -915,6 +924,7 @@ main() {
     echo "============================================================" >&2
     echo "  Done. Verify with: rocminfo   /   rocm-smi" >&2
     echo "============================================================" >&2
+    exit 0
 }
 
 # Run main only when executed, so a test harness can source the functions.
