@@ -110,10 +110,13 @@ SERVICE_NAME=resize-gpu-bars.service
 # Test-only overrides (used by tests/test_resize_gpu_bars.sh, never in
 # production): RESIZE_GPU_BARS_SYSFS points at a fake sysfs tree,
 # RESIZE_GPU_BARS_STATE_DIR at a scratch runtime directory and
-# RESIZE_GPU_BARS_CONFIG at a configuration file other than the system one.
+# RESIZE_GPU_BARS_CONFIG at a configuration file other than the system one;
+# RESIZE_GPU_BARS_ALIAS_FILE replaces the driver's PCI alias table
+# (modules.alias syntax, or one pattern per line).
 SYSFS=${RESIZE_GPU_BARS_SYSFS:-/sys}
 STATE_DIR=${RESIZE_GPU_BARS_STATE_DIR:-/run/resize-gpu-bars}
 CONFIG_FILE=${RESIZE_GPU_BARS_CONFIG:-/etc/default/resize-gpu-bars}
+ALIAS_FILE=${RESIZE_GPU_BARS_ALIAS_FILE:-}
 
 # Defaults, overridable from CONFIG_FILE.
 MAX_SIZE_INDEX=""
@@ -357,15 +360,67 @@ write_size_index() {
 }
 
 # ---------------------------------------------------------------------------
+# Driver alias table: vendor 0x1002 + class 0x03 also matches cards the
+# radeon driver owns, which are out of scope; the modalias check keeps them
+# out of GPUS so they are never unbound, resized or guarded.
+# ---------------------------------------------------------------------------
+DRIVER_ALIASES=()
+# load_driver_aliases -- fills DRIVER_ALIASES with $DRIVER's PCI alias
+# patterns from ALIAS_FILE (tests), modinfo, or modules.alias; returns 0 when
+# at least one pattern was found
+load_driver_aliases() {
+    local line src=""
+    DRIVER_ALIASES=()
+    if [[ -n $ALIAS_FILE ]]; then
+        src=$ALIAS_FILE
+    elif modinfo -F alias "$DRIVER" >/dev/null 2>&1; then
+        src=$(mktemp -p "${TMPDIR:-/tmp}" "resize-gpu-bars.XXXXXX") || return 1
+        modinfo -F alias "$DRIVER" 2>/dev/null | sed 's/^/alias /; s/$/ '"$DRIVER"'/' > "$src"
+        local tmp=$src
+    else
+        src=/lib/modules/$(uname -r)/modules.alias
+    fi
+    while read -r line; do
+        case $line in
+            alias\ pci:*\ "$DRIVER") line=${line#alias }; DRIVER_ALIASES+=("${line% *}") ;;
+            alias\ *) ;;
+            pci:*) DRIVER_ALIASES+=("$line") ;;
+        esac
+    done < "$src" 2>/dev/null
+    [[ -n ${tmp:-} ]] && rm -f "$tmp"
+    (( ${#DRIVER_ALIASES[@]} > 0 ))
+}
+# match_modalias PATTERN MODALIAS -- true when MODALIAS matches the alias
+# PATTERN (the table's "*" wildcards are shell globs)
+match_modalias() {
+    # shellcheck disable=SC2053  # unquoted on purpose: $1 is a glob pattern
+    [[ $2 == $1 ]]
+}
+# driver_claims BDF -- true when $DRIVER's alias table matches the device's
+# modalias; also true, with a warning, when no table could be read at all
+driver_claims() {
+    local modalias pat
+    (( ${#DRIVER_ALIASES[@]} > 0 )) || return 0
+    modalias=$(attr "$1" modalias)
+    [[ -n $modalias ]] || return 0   # kernels without the attribute: cannot tell, accept
+    for pat in "${DRIVER_ALIASES[@]}"; do match_modalias "$pat" "$modalias" && return 0; done
+    return 1
+}
+
+# ---------------------------------------------------------------------------
 # Discovery
 # ---------------------------------------------------------------------------
 discover_gpus() {
     local d bdf vendor class
     GPUS=(); GROUPS_LIST=()
+    load_driver_aliases || log_warn "No PCI alias table for $DRIVER (module not installed for $(uname -r)?); accepting every AMD display device"
     for d in "$SYSFS"/bus/pci/devices/*; do
         bdf=$(basename "$d")
         vendor=$(attr "$bdf" vendor); class=$(attr "$bdf" class)
         [[ $vendor == 0x1002 && $class == 0x03* ]] || continue
+        if ! driver_claims "$bdf"; then
+            log_info "  $bdf $(lspci -mm -s "$bdf" 2>/dev/null | awk -F'"' '{print $6}'): not an $DRIVER device, skipped"; continue
+        fi
         if [[ " $EXCLUDE_BDFS " == *" $bdf "* ]]; then
             log_info "  $bdf excluded by configuration"; continue
         fi

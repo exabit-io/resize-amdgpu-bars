@@ -3,10 +3,11 @@
 #
 # Builds a fake sysfs tree (two Vega II Duo cards on separate root ports, a
 # W5500X-like single GPU without a PLX chain, a 580X-like GPU without ReBAR,
-# a Thunderbolt controller and a Mellanox NIC with SR-IOV VFs), stubs lspci /
-# setpci, and replaces the kernel's re-enumeration with a rule so the plan
-# negotiation can be exercised for kernels that behave like 6.x, like an
-# unpatched 7.0, and like a size-limited window. Nothing real is touched.
+# a radeon-only card, a Thunderbolt controller and a Mellanox NIC with SR-IOV
+# VFs), stubs lspci / setpci and the amdgpu alias table, and replaces the
+# kernel's re-enumeration with a rule so the plan negotiation can be
+# exercised for kernels that behave like 6.x, like an unpatched 7.0, and
+# like a size-limited window. Nothing real is touched.
 #
 #   ./test_resize_gpu_bars.sh path/to/resize_gpu_bars.sh
 set -uo pipefail
@@ -14,7 +15,16 @@ SCRIPT=${1:?usage: $0 path/to/resize_gpu_bars.sh}
 [[ -r $SCRIPT ]] || { echo "$0: cannot read $SCRIPT" >&2; exit 2; }
 T=$(mktemp -d "${TMPDIR:-/tmp}/rgb-test.XXXXXX"); trap 'rm -rf "$T"' EXIT
 export RESIZE_GPU_BARS_SYSFS=$T/sys RESIZE_GPU_BARS_STATE_DIR=$T/run RESIZE_GPU_BARS_CONFIG=/dev/null
+export RESIZE_GPU_BARS_ALIAS_FILE=$T/modules.alias
 SYSFS=$RESIZE_GPU_BARS_SYSFS
+# The alias table amdgpu would export: Vega20 (66A3) and Polaris (67DF); the
+# Caicos line belongs to radeon and must be ignored.
+cat > "$RESIZE_GPU_BARS_ALIAS_FILE" <<'EOF_ALIAS'
+alias pci:v00001002d000066A3sv*sd*bc*sc*i* amdgpu
+alias pci:v00001002d000067DFsv*sd*bc*sc*i* amdgpu
+alias pci:v00001002d00006779sv*sd*bc*sc*i* radeon
+alias usb:v1D6Bp0002d*dc*dsc*dp*ic*isc*ip*in* usbcore
+EOF_ALIAS
 PASS=0; FAIL=0
 ok()   { PASS=$((PASS + 1)); echo "  ok   $*"; }
 fail() { FAIL=$((FAIL + 1)); echo "  FAIL $*"; }
@@ -30,6 +40,10 @@ mkdev() {   # mkdev <bdf> <parent-path> <vendor> <class> [gpu]
     local path=$parent/$bdf; mkdir -p "$path"
     echo "$vendor" > "$path/vendor"; echo "$class" > "$path/class"
     : > "$path/driver_override"
+    local dev=0000
+    case $kind in gpu) dev=66A3 ;; gpu-norebar) dev=67DF ;; gpu-radeon) dev=6779 ;; esac
+    local vend=${vendor#0x}
+    printf 'pci:v0000%sd0000%ssv0000106Bsd00000203bc%ssc%si00\n' "${vend^^}" "$dev" "${class:2:2}" "${class:4:2}" > "$path/modalias"
     DEVPATH[$bdf]=$path
     ln -sfn "$path" "$SYSFS/bus/pci/devices/$bdf"
     if [[ $kind == gpu ]]; then
@@ -37,7 +51,7 @@ mkdev() {   # mkdev <bdf> <parent-path> <vendor> <class> [gpu]
         printf '0x0000000000000800\n' > "$REG/$bdf.0x208.l"    # index 8 (256 MB), BAR0 entry
         printf '0x0407\n' > "$REG/$bdf.COMMAND"
         set_bars "$bdf" 8 assigned
-    elif [[ $kind == gpu-norebar ]]; then
+    elif [[ $kind == gpu-norebar || $kind == gpu-radeon ]]; then
         printf '0x0407\n' > "$REG/$bdf.COMMAND"
         set_bars "$bdf" 8 assigned
     fi
@@ -103,7 +117,11 @@ build_tree() {
     r=$(root_bus 0000:3a)
     mkdev 0000:3a:00.0 "$r" 0x8086 $BR
     mkdev 0000:3b:00.0 "${DEVPATH[0000:3a:00.0]}" 0x1002 $GPU gpu-norebar
-    # Thunderbolt NHI and a Mellanox NIC with two VFs — must never be touched
+    # A radeon-driver card (Caicos-like): AMD, class 03, not amdgpu's
+    r=$(root_bus 0000:70)
+    mkdev 0000:70:00.0 "$r" 0x8086 $BR
+    mkdev 0000:71:00.0 "${DEVPATH[0000:70:00.0]}" 0x1002 $GPU gpu-radeon
+    # Thunderbolt NHI and a Mellanox NIC with two VFs: must never be touched
     r=$(root_bus 0000:24)
     mkdev 0000:24:00.0 "$r" 0x8086 $BR
     mkdev 0000:25:00.0 "${DEVPATH[0000:24:00.0]}" 0x8086 0x088000
@@ -180,8 +198,19 @@ REMOVE_SETTLE=0; BIND_SETTLE=0; RESCAN_POLL=0; PROBE_POLL=0
 log_info() { :; }; log_ok() { :; }; log_warn() { :; }; log_err() { :; }   # quiet
 
 echo "discovery"
+out=$( log_info() { echo "$*"; }; discover_gpus 2>&1 )
 discover_gpus
 assert_eq "gpu count" "${#GPUS[@]}" 7
+assert_eq "radeon card refused" "$(grep -c '0000:71:00.0 .*not an amdgpu device, skipped' <<<"$out")" 1
+assert_eq "radeon card never in GPUS" "$(printf '%s\n' "${GPUS[@]}" | grep -c 0000:71:00.0)" 0
+assert_eq "radeon card is not ours" "$(is_gpu_function 0000:71:00.0 && echo yes || echo no)" no
+assert_eq "alias table loaded" "${#DRIVER_ALIASES[@]}" 2
+assert_eq "match: Vega II" "$(match_modalias 'pci:v00001002d000066A3sv*sd*bc*sc*i*' pci:v00001002d000066A3sv0000106Bsd00000203bc03sc00i00 && echo yes || echo no)" yes
+assert_eq "match: class catch-all" "$(match_modalias 'pci:v00001002d*sv*sd*bc03sc00i00*' pci:v00001002d000066A3sv0000106Bsd00000203bc03sc00i00 && echo yes || echo no)" yes
+assert_eq "no match: other device id" "$(match_modalias 'pci:v00001002d000066A3sv*sd*bc*sc*i*' pci:v00001002d00006779sv0000106Bsd00000203bc03sc00i00 && echo yes || echo no)" no
+assert_eq "no match: other class" "$(match_modalias 'pci:v00001002d*sv*sd*bc03sc00i00*' pci:v00001002d000066A3sv0000106Bsd00000203bc04sc03i00 && echo yes || echo no)" no
+out=$( ALIAS_FILE=/dev/null; log_warn() { echo "$*"; }; discover_gpus 2>&1; echo "gpus=${#GPUS[@]}" )
+assert_eq "no alias table: warns and accepts every AMD display device" "$(grep -c 'No PCI alias table' <<<"$out"):$(grep -o 'gpus=[0-9]*' <<<"$out")" "1:gpus=8"
 assert_eq "group count" "${#GROUPS_LIST[@]}" 5
 assert_eq "root of 0e:00.0" "${GPU_ROOT[0000:0e:00.0]}" "0000:06:00.0"
 assert_eq "root of 1b:00.0" "${GPU_ROOT[0000:1b:00.0]}" "0000:16:00.0"
