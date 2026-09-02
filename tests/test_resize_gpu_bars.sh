@@ -241,6 +241,7 @@ sysfs_write() {
     local bdf
     case $1 in
         */unbind) rm -f "${DEVPATH[$2]}/driver"; return 0 ;;
+        */drivers/amdgpu/bind) ln -sfn "$SYSFS/bus/pci/drivers/amdgpu" "${DEVPATH[$2]}/driver"; return 0 ;;
         */resource0_resize)
             INPLACE_WRITES=$((INPLACE_WRITES + 1))
             (( INPLACE_FAIL )) && return 1
@@ -567,6 +568,71 @@ assert_eq "two hives: rc" "$rc" 0
 assert_eq "two hives: per-GPU hive id" "$(grep -c 'XGMI hive: 111' <<<"$out")" 2
 assert_eq "two hives: summary" "$(sed -n 's/.*XGMI hives (id x members): //p' <<<"$out")" "111x2 222x2 "
 for g in "${GPUS[@]}"; do rm -f "${DEVPATH[$g]}/driver"; done
+
+echo "command line: subcommands, deprecated flags, version, help, check"
+LOCK_FILE=$T/lock
+preflight() { return 0; }             # root, tools and pci=realloc are not the harness's business
+run_main() {   # stdout in $T/main.out, log lines (stderr) in $T/main.err; rc returned
+    ( log_info() { echo "[INFO]  $*" >&2; }; log_ok() { echo "[OK]    $*" >&2; }
+      log_warn() { echo "[WARN]  $*" >&2; }; log_err() { echo "[ERROR] $*" >&2; }
+      main "$@" ) > "$T/main.out" 2> "$T/main.err"
+}
+run_main --version; assert_eq "--version" "$?:$(cat "$T/main.out")" "0:resize-gpu-bars 7.0"
+run_main --help; assert_eq "--help rc" "$?" 0
+assert_eq "--help comes from usage()" "$(grep -c '^Usage: resize-gpu-bars' "$T/main.out")" 1
+assert_eq "--help documents the three exit statuses" "$(grep -cE '^  [012]  ' "$T/main.out")" 3
+assert_eq "--help lists every subcommand" "$(grep -cE '^  (resize|status|check|dry-run|diagnose|revert) ' "$T/main.out")" 6
+run_main bogus; assert_eq "unknown argument exits 1" "$?" 1
+run_main status; rc=$?
+assert_eq "status rc" "$rc" 0
+assert_eq "status line format" "$(grep -cE '^gpus=8( [0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]:bar0=[^,]+,idx=-?[0-9]+,max=-?[0-9]+,drv=[^,]+,root=[^ ]+){8}( last: plan=.*)?$' "$T/main.out")" 1
+assert_eq "status: one line, nothing else on stdout" "$(wc -l < "$T/main.out")" 1
+run_main --status; assert_eq "--status still works" "$?:$(grep -c '^gpus=8' "$T/main.out")" "0:1"
+assert_eq "--status warns about deprecation" "$(grep -c "'--status' is deprecated" "$T/main.err")" 1
+run_main --diagnose-only; assert_eq "--diagnose-only still works" "$?:$(grep -c 'Diagnostics complete' "$T/main.err"):$(grep -c "'--diagnose-only' is deprecated.*use 'diagnose'" "$T/main.err")" "0:1:1"
+run_main diagnose; assert_eq "diagnose" "$?:$(grep -c 'Diagnostics complete' "$T/main.err"):$(grep -c deprecated "$T/main.err")" "0:1:0"
+assert_eq "diagnose shows the six groups" "$(grep -c '^\[INFO\]  Group ' "$T/main.err")" 6
+run_main dry-run; assert_eq "dry-run" "$?:$(grep -c 'Dry run complete' "$T/main.err")" "0:1"
+run_main --dry-run; assert_eq "--dry-run alias" "$?:$(grep -c deprecated "$T/main.err")" "0:1"
+CHECK_TOOL=$T/no-such-check-tool
+run_main check; assert_eq "check without the tool installed" "$?" 1
+CHECK_TOOL=$T/check; printf '#!/bin/bash\necho "check called with: $*"\n' > "$CHECK_TOOL"; chmod +x "$CHECK_TOOL"
+run_main check -1; assert_eq "check execs the check tool with its arguments" "$?:$(cat "$T/main.out")" "0:check called with: -1"
+
+echo "full runs through main: exit status 0 / 2 / 1, journal hygiene"
+unload_driver; reset_regs; clear_stale_overrides; RULE=6x; MODPROBE_RC=0
+run_main resize --force; rc=$?
+assert_eq "all-max on a 6.x-like kernel: exit 0" "$rc" 0
+assert_eq "SUCCESS line" "$(grep -c 'SUCCESS:' "$T/main.err")" 1
+assert_eq "Plan achieved line" "$(grep -c 'Plan achieved : all-max' "$T/main.err")" 1
+assert_eq "check tool strings present" "$(grep -c 'Large BARs    : 8 / 8' "$T/main.err"):$(grep -c 'Driverless    : 0 / 8' "$T/main.err")" "1:1"
+assert_eq "every GPU bound" "$(bound 0000:0b:00.0),$(bound 0000:60:00.0),$(bound 0000:3b:00.0)" "amdgpu,amdgpu,amdgpu"
+assert_eq "journal: no blank lines" "$(grep -c '^$' "$T/main.err")" 0
+assert_eq "journal: plain ASCII" "$(LC_ALL=C grep -c '[^ -~]' "$T/main.err")" 0
+assert_eq "journal: no rule or box lines" "$(grep -cE '^\[[A-Z]+\] +[-=_#*]{4,}' "$T/main.err")" 0
+assert_eq "journal: one-line phase banners" "$(grep -c '^== Phase ' "$T/main.err")" 3
+assert_eq "journal: nothing on stdout" "$(wc -c < "$T/main.out")" 0
+run_main resize --force; rc=$?
+assert_eq "second run takes the fast path: exit 0, nothing re-enumerated" "$rc:$(grep -c 'no re-enumeration needed' "$T/main.err")" "0:1"
+unload_driver; reset_regs; clear_stale_overrides; RULE=70vanilla
+run_main resize --force; rc=$?
+assert_eq "unpatched-7.0-like kernel: exit 2 (bind guard holding)" "$rc" 2
+assert_eq "second dies fenced off" "$(cat "${DEVPATH[0000:0e:00.0]}/driver_override"),$(cat "${DEVPATH[0000:1e:00.0]}/driver_override")" "none,none"
+assert_eq "first dies bound" "$(bound 0000:0b:00.0),$(bound 0000:1b:00.0)" "amdgpu,amdgpu"
+assert_eq "verdict strings" "$(grep -c 'Plan achieved : none' "$T/main.err"):$(grep -c 'Driverless    : 2 / 8' "$T/main.err"):$(grep -c 'rejected: unassigned BARs on: ' "$T/main.err")" "1:1:4"
+assert_eq "fenced-off dies reset to baseline for the next boot" "$(read_size_index 0000:0e:00.0):$(read_size_index 0000:1e:00.0)" "8:8"
+unload_driver; reset_regs; clear_stale_overrides; OVERRIDE_SET=(); OVERRIDE_KEEP=(); RULE=6x; MODPROBE_RC=1
+run_main resize --force; assert_eq "modprobe failure: exit 1" "$?" 1
+MODPROBE_RC=0; unload_driver; reset_regs; SETPCI_FAIL_AFTER=$((SETPCI_CTRL_WRITES + 1))
+run_main resize --force; rc=$?
+assert_eq "register left dirty: exit 1, driver never loaded" "$rc:$(grep -c 'not re-enumerated on: 0000:0b:00.0' "$T/main.err"):$([[ -d $SYSFS/module/amdgpu ]] && echo loaded || echo not-loaded)" "1:1:not-loaded"
+assert_eq "cleanup reported the dirty die" "$(grep -c 'state of 0000:0b:00.0: size index 15 (written, not re-enumerated)' "$T/main.err")" 1
+SETPCI_FAIL_AFTER=-1; GPU_DIRTY=(); GPU_DIRTY_FROM=(); unload_driver; reset_regs; clear_stale_overrides
+run_main resize --force; assert_eq "recovered: exit 0" "$?" 0
+run_main revert; rc=$?
+assert_eq "revert: exit 0, baseline plan, everything bound" "$rc:$(grep -c 'Plan achieved : baseline' "$T/main.err"):$(bound 0000:0b:00.0):$(bar0_bytes 0000:0b:00.0)" "0:1:amdgpu:$(( 256 << 20 ))"
+run_main --revert; assert_eq "--revert alias" "$?:$(grep -c deprecated "$T/main.err")" "0:1"
+unload_driver; reset_regs; clear_stale_overrides
 
 echo
 echo "passed=$PASS failed=$FAIL"
