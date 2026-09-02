@@ -51,11 +51,12 @@
 #
 #   Why a die can lose at all: sibling bridge windows that each contain one
 #   high-alignment BAR undersize their shared parent window on kernel 7.0
-#   (upstream commit 3958bf16e2fe; fix in /root/0001-PCI-*.patch, verified
-#   2026-09-02). Kernels 6.8 through 6.17 and a patched 7.0 fit everything on
-#   plan 1. On an unpatched 7.0 nothing fits once the subtree has been
-#   re-enumerated, not even baseline, and the bind guard is what keeps the
-#   boot alive. See /root/AMDGPU-BAR-HANDOVER.md.
+#   (a regression from upstream commit 3958bf16e2fe; a one-line fix to
+#   drivers/pci/setup-bus.c is proposed upstream). Kernels 6.8 through 6.17
+#   and a patched 7.0 fit everything on plan 1. On an unpatched 7.0 nothing
+#   fits once the subtree has been re-enumerated, not even baseline, and the
+#   bind guard is what keeps the boot alive. See the README's kernel
+#   compatibility section.
 #
 # SUBCOMMANDS, OPTIONS, CONFIGURATION, EXIT STATUS
 #   See usage() below (resize-gpu-bars --help) and the man page.
