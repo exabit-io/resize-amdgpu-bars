@@ -246,11 +246,6 @@ highest_bit() {   # highest set bit index of a hex bitmask, -1 if zero
     for (( i = 63; i >= 0; i-- )); do (( (v >> i) & 1 )) && { echo "$i"; return; }; done
     echo -1
 }
-lowest_bit() {
-    local v=$(( 16#${1#0x} )) i
-    for (( i = 0; i < 64; i++ )); do (( (v >> i) & 1 )) && { echo "$i"; return; }; done
-    echo -1
-}
 
 # Parent device of a PCI function (BDF), or "" when its parent is a root bus.
 pci_parent() {
@@ -407,12 +402,32 @@ driver_claims() {
     return 1
 }
 
+# observed_baseline BDF CURRENT -- prints the size index the device had when
+# it was first seen this boot, recording CURRENT in STATE_DIR on the first
+# call. "Baseline" is what firmware programmed, not the smallest supported
+# size: firmware that already enables ReBAR must never be shrunk on fallback.
+# STATE_DIR is on /run, so the record lives exactly one boot.
+observed_baseline() {
+    local bdf=$1 cur=$2 f=$STATE_DIR/baseline-$1 saved
+    if [[ -r $f ]] && saved=$(<"$f") && [[ $saved =~ ^[0-9]+$ ]]; then echo "$saved"; return 0; fi
+    (( cur >= 0 )) || { echo "$cur"; return 0; }   # register unreadable: nothing to record
+    if ! { mkdir -p "$STATE_DIR" && echo "$cur" > "$f"; } 2>/dev/null; then
+        log_warn "  Could not record the baseline size of $bdf in $STATE_DIR"
+    fi
+    echo "$cur"
+}
+
 # ---------------------------------------------------------------------------
 # Discovery
 # ---------------------------------------------------------------------------
 discover_gpus() {
     local d bdf vendor class
+    # Start from nothing: a second discovery in the same process (status
+    # after a run, the test harness) must not inherit stale members.
     GPUS=(); GROUPS_LIST=()
+    GPU_NAME=(); GPU_FUNCS=(); GPU_REBAR_CAP=(); GPU_REBAR_CTRL=(); GPU_SUPPORTED=()
+    GPU_MAX_INDEX=(); GPU_BASE_INDEX=(); GPU_CUR_INDEX=(); GPU_ROOT=(); GPU_ROOT_IMPURE=()
+    GROUP_MEMBERS=(); GROUP_RESCAN=(); GROUP_CHAIN=()
     load_driver_aliases || log_warn "No PCI alias table for $DRIVER (module not installed for $(uname -r)?); accepting every AMD display device"
     for d in "$SYSFS"/bus/pci/devices/*; do
         bdf=$(basename "$d")
@@ -446,14 +461,11 @@ discover_gpus() {
             GPU_SUPPORTED[$bdf]=$(attr "$bdf" resource0_resize)
             [[ -n ${GPU_SUPPORTED[$bdf]} ]] || GPU_SUPPORTED[$bdf]=$(read_supported_mask "$bdf")
             GPU_CUR_INDEX[$bdf]=$(read_size_index "$bdf")
-            local hi lo
-            hi=$(highest_bit "${GPU_SUPPORTED[$bdf]}"); lo=$(lowest_bit "${GPU_SUPPORTED[$bdf]}")
+            local hi
+            hi=$(highest_bit "${GPU_SUPPORTED[$bdf]}")
             if [[ -n $MAX_SIZE_INDEX ]] && (( hi > MAX_SIZE_INDEX )); then hi=$MAX_SIZE_INDEX; fi
             GPU_MAX_INDEX[$bdf]=$hi
-            # Baseline = the smallest size the device supports. That is what
-            # Apple firmware programs at POST on every card seen so far, and
-            # it is deterministic regardless of what an earlier run did.
-            GPU_BASE_INDEX[$bdf]=$lo
+            GPU_BASE_INDEX[$bdf]=$(observed_baseline "$bdf" "${GPU_CUR_INDEX[$bdf]}")
         fi
 
     done
@@ -739,7 +751,6 @@ negotiate() {
         log_info "Falling back: $name"
     done
     ACHIEVED_PLAN="none"
-LAST_LOSERS=""                # GPUs that lost a BAR in the last rejected plan
     log_err "Every plan failed to produce a fully-assigned BAR layout."
     return 1
 }

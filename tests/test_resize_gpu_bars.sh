@@ -168,7 +168,7 @@ source "$SCRIPT"; set +e
 #   6x        every GPU fits at any size
 #   70vanilla in every group with 2+ GPUs the second GPU never fits
 #   budget    a group fits only if the sum of its BAR0 sizes is <= 40 GB
-RULE=6x
+RULE=6x; REENUM_CALLS=0
 reenumerate() {
     local r g i sum n
     for r in "${GROUPS_LIST[@]}"; do
@@ -231,6 +231,26 @@ assert_eq "mellanox is not ours" "$(is_gpu_function 0000:41:00.2 && echo yes || 
 assert_eq "audio is ours" "$(is_gpu_function 0000:0e:00.1 && echo yes || echo no)" yes
 assert_eq "expected mem BARs" "$(gpu_mem_bars 0000:0b:00.0)" "0 2 5"
 assert_eq "nothing unassigned at start" "$(failed_gpus | wc -l)" 0
+
+echo "baseline: observed at first discovery, kept for the boot"
+assert_eq "baseline recorded in STATE_DIR" "$(cat "$STATE_DIR/baseline-0000:0b:00.0")" 8
+printf '0x0000000000000f00\n' > "$REG/0000:0b:00.0.0x208.l"       # a previous run left index 15
+discover_gpus
+assert_eq "later run: current index 15" "${GPU_CUR_INDEX[0000:0b:00.0]}" 15
+assert_eq "later run: baseline still 8" "${GPU_BASE_INDEX[0000:0b:00.0]}" 8
+rm -f "$STATE_DIR"/baseline-*                                        # a fresh boot whose firmware already enabled ReBAR
+discover_gpus
+assert_eq "firmware at 15: baseline 15, not the lowest supported 8" "${GPU_BASE_INDEX[0000:0b:00.0]}" 15
+RULE=70vanilla; ACHIEVED_PLAN=none
+negotiate 2>/dev/null
+assert_eq "fallback never wrote 8 on the firmware-15 die" "$(read_size_index 0000:0b:00.0)" 15
+assert_eq "fallback plan keeps it at 15" "${PLAN[0000:0b:00.0]}" 15
+assert_eq "its sibling still falls back to its own baseline" "${PLAN[0000:0e:00.0]}" 8
+rm -f "$STATE_DIR"/baseline-*; RULE=6x
+for g in "${GPUS[@]}"; do [[ -n ${GPU_REBAR_CTRL[$g]} ]] && write_size_index "$g" 8 >/dev/null; done
+for g in "${GPUS[@]}"; do set_bars "$g" 8 assigned; done
+discover_gpus
+assert_eq "restored: baseline 8" "${GPU_BASE_INDEX[0000:0b:00.0]}" 8
 
 echo "units"
 assert_eq "index 15 is 32GiB" "$(size_index_to_human 15)" 32GiB
