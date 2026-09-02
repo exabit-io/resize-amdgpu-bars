@@ -8,3 +8,5 @@ debian/*.debhelper
 *.deb
 *.changes
 *.buildinfo
+# generated man pages (debian/rules builds them from man/*.scd)
+man/*.[0-9]

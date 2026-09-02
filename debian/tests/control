@@ -1,0 +1,10 @@
+# Offline harness against the installed binary: a fake sysfs tree, stubbed
+# lspci/setpci, nothing real is touched. Needs no hardware and no root.
+Tests: harness
+Depends: @, bash, coreutils, util-linux, findutils
+Restrictions: allow-stderr
+
+# Shell style fixture (tabs, 80 columns, shellcheck -S style), when vendored.
+Tests: style
+Depends: @, bash, shellcheck
+Restrictions: allow-stderr, skippable

@@ -2,20 +2,37 @@ Source: resize-gpu-bars
 Section: admin
 Priority: optional
 Maintainer: Nikolas Britton <nikolas.britton@gmail.com>
-Build-Depends: debhelper-compat (= 13)
+Build-Depends: debhelper-compat (= 13), scdoc
 Standards-Version: 4.6.2
 Rules-Requires-Root: no
+Homepage: https://github.com/nbritton/resize-gpu-bars
+Vcs-Git: https://github.com/nbritton/resize-gpu-bars.git
+Vcs-Browser: https://github.com/nbritton/resize-gpu-bars
 
 Package: resize-gpu-bars
 Architecture: all
 Depends: ${misc:Depends}, bash (>= 5), pciutils, kmod, systemd
 Recommends: initramfs-tools, grub2-common
-Description: Resizable BAR setup and bind guard for AMD GPUs on Mac Pro 7,1
- Enlarges the CPU-visible VRAM aperture (BAR0) of every AMD GPU to the
- largest size the device supports, re-enumerates only the PCI subtrees that
- contain GPUs so the kernel re-sizes the bridge windows, and loads amdgpu
- once behind a guard that never hands the driver a device with an
- unassigned BAR (which would hang the boot in an SR-IOV mailbox wait).
+Description: Resizable BAR for AMD GPUs behind PCIe switches
+ Enlarges the CPU-visible VRAM aperture (BAR0) of every AMD GPU handled by
+ the amdgpu driver to the largest size the device supports, on machines
+ where neither the firmware nor the driver's own resize path can do it:
+ GPUs that sit behind a PCIe switch (an on-board PLX switch on a dual-die
+ card, an expansion chassis, a Thunderbolt enclosure), several bridge
+ windows deep, so that a bare Resizable BAR register write leaves the BAR
+ unassigned because the windows above it never grow.
  .
- Discovers GPUs, Resizable BAR registers and bridge topology at run time,
- so any mix of MPX cards and other PCIe devices is supported.
+ It programs the new size, removes the highest PCI subtree that contains
+ nothing but GPU functions, and rescans that subtree on its own root bus
+ with pci=realloc so the kernel re-sizes the bridge windows; nothing else
+ on the bus is touched and no global rescan is ever issued. amdgpu is then
+ loaded exactly once, behind a bind guard that never hands the driver a
+ device whose BAR did not come back (that would hang the boot in an SR-IOV
+ mailbox wait). GPUs, Resizable BAR capabilities and bridge topology are
+ discovered at run time; GPUs without the capability, and any non-AMD
+ device, are left alone.
+ .
+ Ships a boot-time systemd unit, a modprobe blacklist that defers the
+ amdgpu autoload until the unit has run, and a GRUB drop-in adding
+ pci=realloc to the kernel command line. Reference platform: dual-die MPX
+ modules in an Apple Mac Pro (2019).
