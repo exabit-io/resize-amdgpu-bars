@@ -1,10 +1,23 @@
 #!/bin/sh
+# postrm for resize-gpu-bars. The blacklist under /usr/lib/modprobe.d and the
+# GRUB drop-in are gone by now; rebuild every initrd and grub.cfg so the next
+# boot autoloads amdgpu again and no longer carries pci=realloc. Failures are
+# reported but never fail the removal.
 set -e
+
 #DEBHELPER#
+
+warn() { echo "resize-gpu-bars: $*" >&2; }
+
 case "$1" in
   purge|remove)
-    if command -v update-initramfs >/dev/null 2>&1; then update-initramfs -u >/dev/null 2>&1 || true; fi
-    if command -v update-grub >/dev/null 2>&1; then update-grub >/dev/null 2>&1 || true; fi
+    if command -v update-initramfs >/dev/null 2>&1; then
+      update-initramfs -u -k all || warn "update-initramfs -u -k all failed; run it by hand so amdgpu autoloads again at boot."
+    fi
+    if command -v update-grub >/dev/null 2>&1; then
+      update-grub || warn "update-grub failed; run it by hand to drop pci=realloc from the kernel command line."
+    fi
     ;;
 esac
+
 exit 0

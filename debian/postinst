@@ -1,15 +1,45 @@
 #!/bin/sh
+# postinst for resize-gpu-bars. The unit is enabled by the debhelper snippet
+# below but NEVER started here: a start unbinds and re-initialises every AMD
+# GPU on a live box (the 6.0 -> 6.1 upgrade did exactly that). It runs at the
+# next boot.
 set -e
+
+warn() { echo "resize-gpu-bars: $*" >&2; }
+
 case "$1" in
   configure)
-    if command -v update-initramfs >/dev/null 2>&1; then update-initramfs -u >/dev/null 2>&1 || echo "resize-gpu-bars: update-initramfs failed; run it by hand" >&2; fi
-    if command -v update-grub >/dev/null 2>&1; then update-grub >/dev/null 2>&1 || echo "resize-gpu-bars: update-grub failed; run it by hand" >&2; fi
-    if ! grep -qw pci=realloc /proc/cmdline 2>/dev/null; then
-      echo "resize-gpu-bars: reboot required (pci=realloc and the amdgpu blacklist take effect at boot)." >&2
+    # The blacklist lives in the initramfs; -k all so every installed kernel's
+    # initrd gets it, not only the newest one (which need not be the one that
+    # boots).
+    if command -v update-initramfs >/dev/null 2>&1; then
+      if ! update-initramfs -u -k all; then
+        warn "update-initramfs -u -k all failed; run it by hand before rebooting,"
+        warn "or amdgpu autoloads from the initramfs before the service runs."
+      fi
+    else
+      warn "update-initramfs not found; the amdgpu blacklist is not in the initramfs"
+      warn "until the initramfs is rebuilt by whatever tool this system uses."
     fi
-    echo "resize-gpu-bars: the service is enabled and runs at the next boot; the package never starts it" >&2
-    echo "resize-gpu-bars: (a start unbinds and re-initialises every AMD GPU). To apply now: systemctl start resize-gpu-bars.service" >&2
+    if command -v update-grub >/dev/null 2>&1; then
+      if ! update-grub; then
+        warn "update-grub failed; run it by hand so pci=realloc reaches the kernel command line."
+      fi
+    else
+      warn "update-grub not found; add pci=realloc to the kernel command line by hand"
+      warn "(see resize-gpu-bars(8) for rEFInd and OpenCore)."
+    fi
+    if ! grep -qw pci=realloc /proc/cmdline 2>/dev/null; then
+      warn "reboot required (pci=realloc and the amdgpu blacklist take effect at boot)."
+      if [ -x /usr/share/update-notifier/notify-reboot-required ]; then
+        /usr/share/update-notifier/notify-reboot-required || true
+      fi
+    fi
+    warn "the service is enabled and runs at the next boot; the package never starts it"
+    warn "(a start unbinds and re-initialises every AMD GPU). To apply now: systemctl start resize-gpu-bars.service"
     ;;
 esac
+
 #DEBHELPER#
+
 exit 0
