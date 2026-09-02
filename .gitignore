@@ -1,0 +1,10 @@
+debian/.debhelper/
+debian/resize-gpu-bars/
+debian/files
+debian/*.substvars
+debian/*.debhelper.log
+debian/debhelper-build-stamp
+debian/*.debhelper
+*.deb
+*.changes
+*.buildinfo

@@ -1,0 +1,21 @@
+Source: resize-gpu-bars
+Section: admin
+Priority: optional
+Maintainer: Nikolas Britton <nikolas.britton@gmail.com>
+Build-Depends: debhelper-compat (= 13)
+Standards-Version: 4.6.2
+Rules-Requires-Root: no
+
+Package: resize-gpu-bars
+Architecture: all
+Depends: ${misc:Depends}, bash (>= 5), pciutils, kmod, systemd
+Recommends: initramfs-tools, grub2-common
+Description: Resizable BAR setup and bind guard for AMD GPUs on Mac Pro 7,1
+ Enlarges the CPU-visible VRAM aperture (BAR0) of every AMD GPU to the
+ largest size the device supports, re-enumerates only the PCI subtrees that
+ contain GPUs so the kernel re-sizes the bridge windows, and loads amdgpu
+ once behind a guard that never hands the driver a device with an
+ unassigned BAR (which would hang the boot in an SR-IOV mailbox wait).
+ .
+ Discovers GPUs, Resizable BAR registers and bridge topology at run time,
+ so any mix of MPX cards and other PCIe devices is supported.

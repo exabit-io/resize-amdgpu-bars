@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# resize-gpu-bars-check — one-line verdict for a resize-gpu-bars boot, appended
+# to a matrix log so kernels/cards can be compared. Read-only.
+#   resize-gpu-bars-check        this boot (journal + live sysfs)
+#   resize-gpu-bars-check -1     previous boot (journal only)
+set -u
+B=${1:-0}
+LOG=${LOG:-/var/log/resize-gpu-bars/kernel-matrix.log}
+J() { journalctl -b "$B" -u resize-gpu-bars.service --no-pager -o cat 2>/dev/null; }
+K() { journalctl -b "$B" -k --no-pager -o cat 2>/dev/null; }
+kver=$(K | head -1 | sed -E 's/^Linux version ([^ ]+).*/\1/')
+btime=$(journalctl -b "$B" --no-pager -o short-iso 2>/dev/null | head -1 | cut -c1-19)
+plan=$(J | sed -n 's/.*Plan achieved *: *//p' | tail -1)
+large=$(J | sed -n 's/.*Large BARs *: *//p' | tail -1 | tr -d ' ')
+drvless=$(J | sed -n 's/.*Driverless *: *//p' | tail -1 | tr -d ' ')
+success=$(J | grep -c 'SUCCESS:')
+rejected=$(J | grep -c 'rejected')
+hive=$(K | grep -c 'XGMI: Add node')
+traces=$(K | grep -cE 'Call Trace|BUG:|Oops|hung task|blocked for more than')
+sriov=$(K | grep -cE 'trn=2 ACK|MCBP is enabled')
+losers=$(J | grep -o 'unassigned BARs on: .*' | head -1)
+if [[ $B == 0 ]]; then
+  status=$(/usr/sbin/resize_gpu_bars.sh --status 2>/dev/null || true)
+  bar0=$(grep -oE 'bar0=[^,]+' <<<"$status" | cut -d= -f2 | tr '\n' ' ')
+  wins=""
+  for r in $(grep -oE 'root=[^ ]+' <<<"$status" | cut -d= -f2 | sort -u); do
+    [[ $r == none ]] && continue
+    w=$(lspci -vvs "$r" 2>/dev/null | sed -n 's/.*Prefetchable memory behind bridge: .*\[size=\([^]]*\)\].*/\1/p')
+    wins+="$r=${w:-?} "
+  done
+  kfd=$(ls /sys/class/kfd/kfd/topology/nodes/ 2>/dev/null | wc -l)
+else
+  bar0="(live only)"; wins="(live only)"; kfd="(live only)"
+fi
+case "$plan:$success" in
+  all-max:1|all-large:1) verdict="WORKS" ;;
+  none:*)                verdict="FAILS (bind guard held)" ;;
+  none-needed:*)         verdict="NO RESIZABLE GPU" ;;
+  *)                     verdict="OTHER — inspect" ;;
+esac
+(( traces > 0 || sriov > 0 )) && verdict="$verdict + TRACE/SRIOV NOISE — inspect"
+line="$btime  $kver  verdict=$verdict  plan=${plan:-?}  large=${large:-?}  driverless=${drvless:-?}  windows=${wins% }  bar0=${bar0:-?}  kfd=$kfd  xgmi_nodes=$hive  traces=$traces  rejected=$rejected  ${losers}"
+echo "$line"
+if [[ $B == 0 ]]; then mkdir -p "$(dirname "$LOG")"; echo "$line" >> "$LOG"; echo "(appended to $LOG)"; fi

@@ -1,0 +1,10 @@
+resize-gpu-bars (6.2) noble; urgency=medium
+
+  * Packaging only (script unchanged, v6.1): dh_installsystemd --no-start.
+    The 6.0 -> 6.1 upgrade started the unit because it was in the failed
+    state, which unbound and re-initialised all four GPUs on a running box.
+    The unit is now only enabled; it runs at the next boot, or on an explicit
+    "systemctl start". postinst says so.
+
+ -- Nikolas Britton <nikolas.britton@gmail.com>  Wed, 02 Sep 2026 14:11:37 +0000
+

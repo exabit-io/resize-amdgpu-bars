@@ -1,0 +1,12 @@
+#!/usr/bin/make -f
+%:
+	dh $@
+
+override_dh_installsystemd:
+	# Never start the unit from the package: starting it unbinds and re-initialises
+	# every AMD GPU on a live box (it ran on the 6.0 -> 6.1 upgrade because the
+	# unit was in the failed state). It is enabled and runs at the next boot.
+	dh_installsystemd --no-restart-after-upgrade --no-stop-on-upgrade --no-start
+
+override_dh_auto_test:
+	bash tests/test_resize_gpu_bars.sh ./resize_gpu_bars.sh >/dev/null

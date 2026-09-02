@@ -1,0 +1,69 @@
+# /etc/systemd/system/resize-gpu-bars.service  (v6)
+#
+# Enlarges the Resizable BAR of every AMD GPU it finds (any MPX card mix on a
+# MacPro7,1), re-enumerates only the GPU subtrees so the kernel re-sizes the
+# bridge windows, then loads amdgpu once, behind a bind guard.
+#
+# PREREQUISITES:
+#   /etc/modprobe.d/amdgpu-blacklist.conf — keeps amdgpu from autoloading
+#   before this service runs (otherwise: double init/teardown, KFD breakage).
+#
+# Installed by the resize-gpu-bars package. Manual install:
+#   cp amdgpu-blacklist.conf /etc/modprobe.d/amdgpu-blacklist.conf
+#   install -m 755 resize_gpu_bars.sh /usr/sbin/resize_gpu_bars.sh
+#   cp resize-gpu-bars.service /etc/systemd/system/
+#   cp resize-gpu-bars.default /etc/default/resize-gpu-bars     # optional
+#   systemctl daemon-reload && systemctl enable resize-gpu-bars.service
+#   update-initramfs -u
+#
+# Verify:
+#   journalctl -u resize-gpu-bars.service -b
+#   /usr/sbin/resize_gpu_bars.sh --status
+#   rocminfo
+
+[Unit]
+Description=Resize AMD GPU BARs and load amdgpu (MacPro7,1)
+DefaultDependencies=no
+Requires=local-fs.target sysinit.target systemd-udevd.service
+After=sysinit.target local-fs.target systemd-udevd.service systemd-modules-load.service
+Before=display-manager.service graphical.target multi-user.target
+# The script never modprobes a GPU whose BAR failed to assign (driver_override
+# = none first); handing amdgpu such a device hangs the boot in D state.
+Before=modprobe@amdgpu.service
+Wants=systemd-udevd.service
+ConditionPathExists=/usr/sbin/resize_gpu_bars.sh
+FailureAction=none
+
+[Service]
+Type=oneshot
+# Courtesy wait only: the script needs nothing from udev and waits for the GPU
+# nodes itself. applesmc's ~110 s probe failure used to stall a 60 s settle.
+ExecStartPre=-/usr/bin/udevadm settle --timeout=5
+ExecStart=/usr/sbin/resize_gpu_bars.sh --force
+RemainAfterExit=yes
+# Budget: discovery + up to MAX_ROUNDS re-enumeration cycles (~10 s each) +
+# bounded modprobe (180 s + 30 s kill) + PROBE_WAIT 60 s + margin. Must stay
+# larger than MODPROBE_TIMEOUT + PROBE_WAIT in the script/config.
+TimeoutStartSec=480
+
+CapabilityBoundingSet=CAP_SYS_ADMIN CAP_SYS_RAWIO CAP_DAC_OVERRIDE CAP_SYS_MODULE
+AmbientCapabilities=CAP_SYS_ADMIN CAP_SYS_RAWIO CAP_SYS_MODULE
+
+ProtectHome=yes
+ProtectSystem=strict
+# sysfs for the PCI writes; /run/lock for the instance lock; the runtime
+# directory for per-boot state (expected BAR map, last summary).
+ReadWritePaths=/sys/bus/pci /sys/devices /run/lock
+RuntimeDirectory=resize-gpu-bars
+RuntimeDirectoryPreserve=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+ProtectKernelTunables=no
+ProtectKernelModules=no
+
+StandardOutput=journal+console
+StandardError=journal+console
+SyslogIdentifier=resize-gpu-bars
+
+[Install]
+WantedBy=multi-user.target

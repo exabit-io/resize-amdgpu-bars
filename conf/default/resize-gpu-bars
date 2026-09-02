@@ -1,0 +1,25 @@
+# /etc/default/resize-gpu-bars — optional overrides for resize_gpu_bars.sh v6.
+# Shell syntax; every line is optional. Defaults shown.
+
+# Cap every GPU at this Resizable BAR size index: 2^(n+20) bytes,
+# 15 = 32 GB, 14 = 16 GB, 13 = 8 GB, 12 = 4 GB, 8 = 256 MB. Empty = device max.
+#MAX_SIZE_INDEX=
+
+# GPUs (domain:bus:dev.fn) to leave completely alone: not resized, not
+# unbound, their subtree never removed. Their driver still loads normally.
+#EXCLUDE_BDFS="0000:0b:00.0"
+
+# Skip negotiation and use exactly one plan: all-max | baseline
+#FORCE_PLAN=
+
+# Driver loaded after the resize.
+#GPU_DRIVER=amdgpu
+
+# Seconds. MODPROBE_TIMEOUT + PROBE_WAIT must stay below the unit's
+# TimeoutStartSec (480).
+#MODPROBE_TIMEOUT=180
+#PROBE_WAIT=60
+#RESCAN_WAIT=30
+
+# Maximum demote-and-retry rounds before falling back to baseline.
+#MAX_ROUNDS=8

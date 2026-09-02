@@ -1,0 +1,15 @@
+#!/bin/sh
+set -e
+case "$1" in
+  configure)
+    if command -v update-initramfs >/dev/null 2>&1; then update-initramfs -u >/dev/null 2>&1 || echo "resize-gpu-bars: update-initramfs failed; run it by hand" >&2; fi
+    if command -v update-grub >/dev/null 2>&1; then update-grub >/dev/null 2>&1 || echo "resize-gpu-bars: update-grub failed; run it by hand" >&2; fi
+    if ! grep -qw pci=realloc /proc/cmdline 2>/dev/null; then
+      echo "resize-gpu-bars: reboot required (pci=realloc and the amdgpu blacklist take effect at boot)." >&2
+    fi
+    echo "resize-gpu-bars: the service is enabled and runs at the next boot; the package never starts it" >&2
+    echo "resize-gpu-bars: (a start unbinds and re-initialises every AMD GPU). To apply now: systemctl start resize-gpu-bars.service" >&2
+    ;;
+esac
+#DEBHELPER#
+exit 0
