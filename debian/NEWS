@@ -1,0 +1,24 @@
+resize-gpu-bars (7.0) unstable; urgency=medium
+
+  The tool is now one binary, /usr/sbin/resize-gpu-bars, with subcommands:
+  resize (the default; --force for non-interactive use, as the unit does),
+  status, check, dry-run, diagnose and revert, plus --version and --help.
+  The old name resize_gpu_bars.sh and the old --flags (--force,
+  --diagnose-only, --dry-run, --revert, --status) keep working for this
+  release as aliases and warn on use; both go away in 8.0. Update any script
+  or cron job that calls /usr/sbin/resize_gpu_bars.sh.
+
+  Exit status 2 now means "degraded": the resize ran but the bind guard is
+  holding at least one GPU back from the driver. The unit treats 2 as
+  success so boot proceeds; check "systemctl show -p ExecMainStatus
+  resize-gpu-bars.service" or "resize-gpu-bars status" to tell the two apart.
+
+  The amdgpu blacklist moved from the conffile
+  /etc/modprobe.d/amdgpu-blacklist.conf to
+  /usr/lib/modprobe.d/resize-gpu-bars.conf. It is removed together with the
+  package, so "apt remove" leaves a box that autoloads amdgpu again. The old
+  conffile is removed on upgrade (a locally modified copy is kept as
+  amdgpu-blacklist.conf.dpkg-bak). To keep amdgpu blacklisted without the
+  package, drop your own file into /etc/modprobe.d.
+
+ -- Nikolas Britton <nikolas.britton@gmail.com>  Wed, 02 Sep 2026 22:00:00 +0000
