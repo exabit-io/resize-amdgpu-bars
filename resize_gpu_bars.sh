@@ -218,6 +218,11 @@ GUARD_BLOCKED=0               # GPUs the bind guard fenced off in this run
 declare -A GPU_DIRTY          # "1" while a written size index has not been re-enumerated
 declare -A GPU_DIRTY_FROM     # size index the kernel's current assignment corresponds to
 declare -A GPU_DECODE_OFF     # "1" while we hold memory decode disabled around a write
+declare -A OVERRIDE_SET       # functions whose driver_override this run wrote
+declare -A OVERRIDE_KEEP      # ... deliberately, to fence off a BAR-less GPU (left in place)
+TOUCHED=0                     # 1 once the run has started changing hardware state
+RUN_COMPLETE=0                # 1 once the run reached its intended end
+CLEANUP_DONE=0
 
 # ---------------------------------------------------------------------------
 # Small helpers
@@ -900,9 +905,68 @@ negotiate() {
 # ---------------------------------------------------------------------------
 # Bind guard and driver load
 # ---------------------------------------------------------------------------
-block_binding()   { [[ -w $(sysdev "$1")/driver_override ]] && echo none > "$(sysdev "$1")/driver_override" 2>/dev/null; }
-unblock_binding() { [[ -w $(sysdev "$1")/driver_override ]] && echo "" > "$(sysdev "$1")/driver_override" 2>/dev/null || true; }
-clear_stale_overrides() { local g f; for g in "${GPUS[@]}"; do for f in ${GPU_FUNCS[$g]}; do unblock_binding "$f"; done; done; }
+# set_override BDF VALUE -- writes the function's driver_override and
+# remembers that we did, so cleanup can undo it; returns the write's status
+set_override() {
+    sysfs_write "$(sysdev "$1")/driver_override" "$2" || return 1
+    if [[ -n $2 ]]; then OVERRIDE_SET[$1]=1; else unset "OVERRIDE_SET[$1]" "OVERRIDE_KEEP[$1]"; fi
+    return 0
+}
+# block_binding BDF -- fences the GPU off from every driver, on purpose and
+# for good (until the next boot or a manual clear); returns the write's status
+block_binding()   { set_override "$1" none && OVERRIDE_KEEP[$1]=1; }
+unblock_binding() { set_override "$1" ""; }
+clear_stale_overrides() {
+    local g f
+    for g in "${GPUS[@]}"; do for f in ${GPU_FUNCS[$g]}; do present "$f" && unblock_binding "$f"; done; done
+    return 0
+}
+
+# cleanup -- EXIT trap: undoes what an interrupted or failed run would
+# otherwise leave behind (driver_override values we set for the run's own
+# purposes, memory decode held off around a write) and, when the run did not
+# reach its end or left a GPU dirty, logs one line per GPU with the state
+# it is in; safe to run twice; never exits, so the exit status is preserved
+cleanup() {
+    (( CLEANUP_DONE )) && return 0
+    CLEANUP_DONE=1
+    local g f leftover=0
+    for f in "${!OVERRIDE_SET[@]}"; do
+        [[ -n ${OVERRIDE_KEEP[$f]:-} ]] && continue
+        present "$f" || continue
+        if unblock_binding "$f"; then log_info "cleanup: cleared driver_override on $f"
+        else log_warn "cleanup: could not clear driver_override on $f"; fi
+    done
+    for g in "${!GPU_DECODE_OFF[@]}"; do
+        present "$g" || continue
+        if restore_decode "$g"; then log_info "cleanup: re-enabled memory decode on $g"
+        else log_warn "cleanup: could not re-enable memory decode on $g"; leftover=1; fi
+    done
+    (( ${#GPU_DIRTY[@]} > 0 )) && leftover=1
+    if (( leftover || (TOUCHED && ! RUN_COMPLETE) )); then
+        for g in "${GPUS[@]}"; do
+            if ! present "$g"; then log_warn "state of $g: not present"; continue; fi
+            log_warn "state of $g: size index $(read_size_index "$g")$( [[ -n ${GPU_DIRTY[$g]:-} ]] && echo ' (written, not re-enumerated)'), BAR0 $(human_bytes "$(bar0_bytes "$g")"), driver_override '$(attr "$g" driver_override)', driver $(basename "$(readlink "$(sysdev "$g")/driver" 2>/dev/null)" 2>/dev/null || echo none)"
+        done
+    fi
+    return 0
+}
+# on_signal NAME -- TERM/INT/HUP trap: runs cleanup once and exits with the
+# conventional 128+signal status
+on_signal() {
+    local n
+    case $1 in HUP) n=1 ;; INT) n=2 ;; *) n=15 ;; esac
+    log_err "Interrupted by SIG$1; cleaning up."
+    trap - EXIT
+    cleanup
+    exit $(( 128 + n ))
+}
+install_traps() {
+    trap cleanup EXIT
+    trap 'on_signal TERM' TERM
+    trap 'on_signal INT' INT
+    trap 'on_signal HUP' HUP
+}
 
 wait_for_probe() {
     local deadline=$(( SECONDS + PROBE_WAIT )) g pending stable=0 last=-1 nodes
@@ -1022,6 +1086,7 @@ phase1_diagnose() {
 
 phase2_resize() {
     banner "Phase 2: BAR resize (plan negotiation)"
+    TOUCHED=1
     log_info "Clearing stale driver_override values..."; clear_stale_overrides
     negotiate
 }
@@ -1092,6 +1157,7 @@ phase3_verify() {
 
 do_revert() {
     banner "Revert: every GPU back to baseline"
+    TOUCHED=1
     clear_stale_overrides
     plan_baseline
     if try_plan baseline; then ACHIEVED_PLAN=baseline; else ACHIEVED_PLAN=none; log_warn "Baseline re-enumeration incomplete."; fi

@@ -523,6 +523,26 @@ negotiate 2>/dev/null
 assert_eq "negotiation demotes it and succeeds" "$ACHIEVED_PLAN:${PLAN[0000:60:00.0]}:${PLAN[0000:0b:00.0]}" "demote-losers-2:8:15"
 INPLACE_FAIL=0; reset_regs
 
+echo "cleanup trap: overrides, decode, state report, idempotence, exit status"
+discover_gpus; reset_regs; clear_stale_overrides
+set_override 0000:0b:00.0 none                      # ours for the run
+block_binding 0000:1e:00.0                          # deliberate: fenced-off GPU
+printf '0x0405\n' > "$REG/0000:0e:00.0.COMMAND"; GPU_DECODE_OFF[0000:0e:00.0]=1
+GPU_DIRTY[0000:0b:00.0]=1; GPU_DIRTY_FROM[0000:0b:00.0]=8
+out=$( log_info() { echo "$*"; }; log_warn() { echo "$*"; }; TOUCHED=1; cleanup; echo ---; cleanup )
+assert_eq "cleanup: our override cleared" "$(cat "${DEVPATH[0000:0b:00.0]}/driver_override")" ""
+assert_eq "cleanup: deliberate override kept" "$(cat "${DEVPATH[0000:1e:00.0]}/driver_override")" none
+assert_eq "cleanup: decode re-enabled" "$(cat "$REG/0000:0e:00.0.COMMAND")" 0x0407
+assert_eq "cleanup: one state line per GPU" "$(grep -c '^state of ' <<<"$out")" 8
+assert_eq "cleanup: dirty GPU called out" "$(grep -c '^state of 0000:0b:00.0: size index 8 (written, not re-enumerated)' <<<"$out")" 1
+assert_eq "cleanup: second run does nothing" "$(sed -n '/^---$/,$p' <<<"$out" | wc -l)" 1
+out=$( log_info() { echo "$*"; }; log_warn() { echo "$*"; }; GPU_DIRTY=(); OVERRIDE_SET=(); GPU_DECODE_OFF=(); TOUCHED=1; RUN_COMPLETE=1; cleanup )
+assert_eq "cleanup: silent after a complete clean run" "$out" ""
+( install_traps; exit 2 ) 2>/dev/null; assert_eq "EXIT trap preserves the exit status" "$?" 2
+( install_traps; kill -TERM $BASHPID; echo unreachable ) 2>/dev/null; assert_eq "SIGTERM exits 143 after cleanup" "$?" 143
+( install_traps; kill -INT $BASHPID; echo unreachable ) 2>/dev/null; assert_eq "SIGINT exits 130 after cleanup" "$?" 130
+GPU_DIRTY=(); GPU_DIRTY_FROM=(); GPU_DECODE_OFF=(); clear_stale_overrides; OVERRIDE_SET=(); OVERRIDE_KEEP=()
+
 echo "verification: phase 3 with and without XGMI hives"
 # v6.0 died here when no GPU exposed a hive (the attribute is a directory, so
 # the per-GPU read was empty and "grep -v" exited 1 under errexit+pipefail).
