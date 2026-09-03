@@ -31,8 +31,8 @@ override_dh_auto_clean:
 override_dh_auto_test:
 	bash tests/test_resize_amdgpu_bars.sh ./$(SCRIPT)
 	# Advisory until the formatting pass makes the
-	# script pass the fixture; then drop the "|| true".
-	[ ! -x tests/style/run.sh ] || bash tests/style/run.sh $(SCRIPT) || true
+	# script pass the checks; then drop the "|| true".
+	bash tests/style/check.sh $(SCRIPT) || true
 
 override_dh_auto_install:
 	install -D -m 0755 $(SCRIPT) $(PKGDIR)/usr/sbin/resize-amdgpu-bars

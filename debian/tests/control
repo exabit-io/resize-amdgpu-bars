@@ -4,7 +4,7 @@ Tests: harness
 Depends: @, bash, coreutils, util-linux, findutils
 Restrictions: allow-stderr
 
-# Shell style fixture (tabs, 80 columns, shellcheck -S style), when vendored.
+# Shell style checks (tabs, 80 columns, shellcheck -S style).
 Tests: style
 Depends: @, bash, shellcheck
 Restrictions: allow-stderr, skippable

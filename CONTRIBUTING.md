@@ -12,7 +12,7 @@ supported, and no card is listed as supported that has not been booted.
 |---|---|
 | `resize-amdgpu-bars` | the tool, one bash script |
 | `tests/test_resize_amdgpu_bars.sh` | the offline harness |
-| `tests/style/` | the style fixture (`t02_style.sh`, `lib.sh`, the masker) |
+| `tests/style/check.sh` | static style checks (shebang, tabs, 80 columns, eval, shellcheck) |
 | `man/*.scd` | scdoc sources for the manual pages |
 | `conf/default/` | the shipped `/etc/default` files |
 | `debian/` | packaging |
@@ -48,12 +48,13 @@ to follow.
 The project follows Dave Eddy's bash style guide, with two deliberate
 deviations: `#!/bin/bash` (Debian policy for packaged scripts) and the GNU
 tools `find -printf`, `numfmt` and `readlink -f` (the tool reads Linux sysfs
-and cannot run anywhere else). The style fixture under `tests/style/` is
-vendored from the guide's test suite with the shebang check adjusted for
-that decision, and runs as part of `dh_auto_test`:
+and cannot run anywhere else). `tests/style/check.sh` checks the
+mechanical part of the guide (shebang, tabs, 80 columns at tab stop 8,
+trailing whitespace, blank-line runs, `eval`, backticks) and runs
+shellcheck at `-S style`; it is part of `dh_auto_test`:
 
 ```
-bash tests/style/t02_style.sh resize-amdgpu-bars
+bash tests/style/check.sh resize-amdgpu-bars
 shellcheck -S style resize-amdgpu-bars tests/test_resize_amdgpu_bars.sh
 ```
 

@@ -1,4 +1,4 @@
-# CI for resize-amdgpu-bars (to-do 9.3): lint, offline harness, style fixture,
+# CI for resize-amdgpu-bars (to-do 9.3): lint, offline harness, style checks,
 # Debian package build with lintian, deb kept as a build artifact.
 #
 # Nothing here touches PCI: the harness runs against a fake sysfs tree
@@ -21,22 +21,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends shellcheck
           shellcheck --version
-      - name: Script, check tool and harness
-        # Must be clean; to-do 7.7 fixes or documents every note.
+      - name: Script, harness, style checker and tools
+        # Must be clean; the formatting pass fixes or documents every note.
         run: >-
           shellcheck -S style
           resize-amdgpu-bars
           tests/test_resize_amdgpu_bars.sh
-      - name: Tools and the vendored style fixture
-        # -x -P SCRIPTDIR: the fixture's "# shellcheck source=" directives
-        # resolve relative to the script (same flags as its upstream).
-        run: >-
-          shellcheck -x -P SCRIPTDIR -S style
+          tests/style/check.sh
           tools/experiment-resource0-resize.sh
-          tests/style/run.sh
-          tests/style/t02_style.sh
-          tests/style/lib.sh
-          tests/style/mask.sh
 
   harness:
     name: offline harness
@@ -47,20 +39,20 @@ jobs:
         run: bash tests/test_resize_amdgpu_bars.sh ./resize-amdgpu-bars
 
   style:
-    name: bash style fixture
+    name: bash style checks
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Install shellcheck (the fixture runs it when present)
+      - name: Install shellcheck (the checker runs it when present)
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends shellcheck
-      - name: tests/style/run.sh resize-amdgpu-bars
-        # Allowed to fail until the section 7 formatting pass lands
-        # (to-do 7.1-7.8: tabs, 80 columns, shellcheck -S style clean).
-        # Drop continue-on-error in that commit.
+      - name: tests/style/check.sh resize-amdgpu-bars
+        # Allowed to fail until the formatting pass lands (tabs, 80
+        # columns, shellcheck -S style clean). Drop continue-on-error in
+        # that commit.
         continue-on-error: true
-        run: tests/style/run.sh resize-amdgpu-bars
+        run: tests/style/check.sh resize-amdgpu-bars
 
   package:
     name: dpkg-buildpackage + lintian

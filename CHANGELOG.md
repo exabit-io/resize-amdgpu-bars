@@ -84,7 +84,7 @@ First public release, as resize-amdgpu-bars. Same method as the internal
   current `Standards-Version`; the long description states the scope and
   the topology. Full MIT licence text in `debian/copyright`.
 - Build-time check that the tool's version equals the changelog version.
-- `debian/tests/control` runs the harness and the style fixture under
+- `debian/tests/control` runs the harness and the style checks under
   autopkgtest.
 - Unit and package descriptions no longer name a machine model; the Mac Pro
   appears in the README as the reference platform.
@@ -107,20 +107,20 @@ First public release, as resize-amdgpu-bars. Same method as the internal
   platform as the case study, support tiers, every subcommand, a
   configuration reference, troubleshooting, non-GRUB bootloaders and kernel
   compatibility.
-- `CHANGELOG.md`, `CONTRIBUTING.md` (harness, style fixture, boot-test
+- `CHANGELOG.md`, `CONTRIBUTING.md` (harness, style checks, boot-test
   checklist) and `SECURITY.md`.
 
 ### Style and tests
 
 - Formatting pass to the project style guide (tabs, 80 columns, single
   quotes, `printf`, parameter expansion), shellcheck clean at `-S style`,
-  the style fixture vendored under `tests/style/`.
+  the mechanical checks in `tests/style/check.sh`.
 - Mutable globals lowercased, per-group lists as arrays, `while read -r`
   over `for x in $(fn)`.
 - New harness cases for every correctness item above, the exit codes, the
   `status` line format, and the guard path with stubbed `modprobe` and
   `timeout`. The harness takes the script path as a required argument.
-- CI runs the harness, the style fixture, shellcheck, `dpkg-buildpackage`
+- CI runs the harness, the style checks, shellcheck, `dpkg-buildpackage`
   and `lintian`.
 
 ## Pre-release history (never published)
