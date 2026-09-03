@@ -1,6 +1,0 @@
-# The amdgpu blacklist moved from a conffile in /etc/modprobe.d to
-# /usr/lib/modprobe.d/resize-gpu-bars.conf in 7.0 so that removing the
-# package also removes the blacklist (a leftover conffile plus a rebuilt
-# initramfs left a removed box with no GPU driver until purge). Drop the
-# old conffile on upgrade from any 6.x so a box never carries both.
-rm_conffile /etc/modprobe.d/amdgpu-blacklist.conf 7.0~

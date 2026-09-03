@@ -210,7 +210,7 @@ The package installs these files:
 
 | path | purpose |
 |---|---|
-| `/usr/sbin/resize-gpu-bars` | the tool; `resize_gpu_bars.sh` is a deprecated symlink to it |
+| `/usr/sbin/resize-gpu-bars` | the tool |
 | `/usr/lib/systemd/system/resize-gpu-bars.service` | runs `resize-gpu-bars resize --force` early in boot; enabled on install, never started by the package |
 | `/usr/lib/modprobe.d/resize-gpu-bars.conf` | `blacklist amdgpu`, so udev does not load the driver before the resize; override from `/etc/modprobe.d` if needed |
 | `/etc/default/grub.d/resize-gpu-bars.cfg` | adds `pci=realloc` to the kernel command line |
@@ -368,13 +368,6 @@ Every resizable GPU back to its baseline size, re-enumerate, load the driver
 behind the guard. Returns to the firmware layout without a reboot. On an
 unpatched 7.0 kernel this does not help once a subtree has been
 re-enumerated (see "Kernel compatibility"); reboot instead.
-
-### Deprecated aliases
-
-The 6.x spellings `resize_gpu_bars.sh`, `--force`, `--status`,
-`--diagnose-only`, `--dry-run`, `--revert` and the separate
-`resize-gpu-bars-check` keep working in 7.0 with a warning on standard error
-and are removed in 8.0.
 
 ## Configuration
 

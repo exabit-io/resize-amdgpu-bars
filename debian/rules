@@ -41,12 +41,6 @@ override_dh_auto_test:
 override_dh_auto_install:
 	install -D -m 0755 $(SCRIPT) $(PKGDIR)/usr/sbin/resize-gpu-bars
 
-# The compat name resize_gpu_bars.sh gets a man page link once the real page
-# exists (a plain symlink: dh_installman would read ".sh" as a language code).
-override_dh_installman:
-	dh_installman $(MANPAGES)
-	[ ! -e $(PKGDIR)/usr/share/man/man8/resize-gpu-bars.8 ] || ln -s resize-gpu-bars.8 $(PKGDIR)/usr/share/man/man8/resize_gpu_bars.sh.8
-
 override_dh_installsystemd:
 	# Never start the unit from the package: starting it unbinds and
 	# re-initialises every AMD GPU on a live box (it ran on the 6.0 -> 6.1

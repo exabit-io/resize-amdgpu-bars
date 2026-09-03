@@ -1204,14 +1204,8 @@ Exit status:
      GPU went missing; the driver was loaded on the rest
   1  error: refused run, bad configuration, driver load failed, or a GPU
      was left with a size the kernel has not seen
-
-Deprecated (removed in 8.0): --resize, --diagnose-only, --dry-run, --revert,
---status; use the subcommand of the same name.
 EOF
 }
-# deprecated OLD NEW -- one stderr line per use of a pre-7.0 flag
-deprecated() { log_warn "'$1' is deprecated and will be removed in 8.0; use '$2'"; }
-
 # run_exit_status -- prints the exit status of a completed run: 0 full
 # success, 2 degraded (a GPU fenced off, driverless or missing)
 run_exit_status() {
@@ -1232,8 +1226,6 @@ main() {
             --force) force=1 ;;
             --version|-V) echo "resize-gpu-bars $VERSION"; return 0 ;;
             --help|-h) usage; return 0 ;;
-            --resize|--status|--dry-run|--revert) deprecated "$arg" "${arg#--}"; cmd=${arg#--} ;;
-            --diagnose-only) deprecated "$arg" diagnose; cmd=diagnose ;;
             *) log_err "Unknown argument '$arg' (try --help)"; return 1 ;;
         esac
     done

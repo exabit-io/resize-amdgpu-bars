@@ -575,7 +575,7 @@ assert_eq "two hives: per-GPU hive id" "$(grep -c 'XGMI hive: 111' <<<"$out")" 2
 assert_eq "two hives: summary" "$(sed -n 's/.*XGMI hives (id x members): //p' <<<"$out")" "111x2 222x2 "
 for g in "${GPUS[@]}"; do rm -f "${DEVPATH[$g]}/driver"; done
 
-echo "command line: subcommands, deprecated flags, version, help, check"
+echo "command line: subcommands, version, help, check"
 LOCK_FILE=$T/lock
 preflight() { return 0; }             # root, tools and pci=realloc are not the harness's business
 run_main() {   # stdout in $T/main.out, log lines (stderr) in $T/main.err; rc returned
@@ -589,17 +589,14 @@ assert_eq "--help comes from usage()" "$(grep -c '^Usage: resize-gpu-bars' "$T/m
 assert_eq "--help documents the three exit statuses" "$(grep -cE '^  [012]  ' "$T/main.out")" 3
 assert_eq "--help lists every subcommand" "$(grep -cE '^  (resize|status|check|dry-run|diagnose|revert) ' "$T/main.out")" 6
 run_main bogus; assert_eq "unknown argument exits 1" "$?" 1
+run_main --diagnose-only; assert_eq "pre-release flag spelling is not accepted" "$?" 1
 run_main status; rc=$?
 assert_eq "status rc" "$rc" 0
 assert_eq "status line format" "$(grep -cE '^gpus=8( [0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]:bar0=[^,]+,idx=-?[0-9]+,max=-?[0-9]+,drv=[^,]+,root=[^ ]+){8}( last: plan=.*)?$' "$T/main.out")" 1
 assert_eq "status: one line, nothing else on stdout" "$(wc -l < "$T/main.out")" 1
-run_main --status; assert_eq "--status still works" "$?:$(grep -c '^gpus=8' "$T/main.out")" "0:1"
-assert_eq "--status warns about deprecation" "$(grep -c "'--status' is deprecated" "$T/main.err")" 1
-run_main --diagnose-only; assert_eq "--diagnose-only still works" "$?:$(grep -c 'Diagnostics complete' "$T/main.err"):$(grep -c "'--diagnose-only' is deprecated.*use 'diagnose'" "$T/main.err")" "0:1:1"
-run_main diagnose; assert_eq "diagnose" "$?:$(grep -c 'Diagnostics complete' "$T/main.err"):$(grep -c deprecated "$T/main.err")" "0:1:0"
+run_main diagnose; assert_eq "diagnose" "$?:$(grep -c 'Diagnostics complete' "$T/main.err")" "0:1"
 assert_eq "diagnose shows the six groups" "$(grep -c '^\[INFO\]  Group ' "$T/main.err")" 6
 run_main dry-run; assert_eq "dry-run" "$?:$(grep -c 'Dry run complete' "$T/main.err")" "0:1"
-run_main --dry-run; assert_eq "--dry-run alias" "$?:$(grep -c deprecated "$T/main.err")" "0:1"
 CHECK_TOOL=$T/no-such-check-tool
 run_main check; assert_eq "check without the tool installed" "$?" 1
 CHECK_TOOL=$T/check; printf '#!/bin/bash\necho "check called with: $*"\n' > "$CHECK_TOOL"; chmod +x "$CHECK_TOOL"
@@ -637,7 +634,6 @@ SETPCI_FAIL_AFTER=-1; GPU_DIRTY=(); GPU_DIRTY_FROM=(); unload_driver; reset_regs
 run_main resize --force; assert_eq "recovered: exit 0" "$?" 0
 run_main revert; rc=$?
 assert_eq "revert: exit 0, baseline plan, everything bound" "$rc:$(grep -c 'Plan achieved : baseline' "$T/main.err"):$(bound 0000:0b:00.0):$(bar0_bytes 0000:0b:00.0)" "0:1:amdgpu:$(( 256 << 20 ))"
-run_main --revert; assert_eq "--revert alias" "$?:$(grep -c deprecated "$T/main.err")" "0:1"
 unload_driver; reset_regs; clear_stale_overrides
 
 echo

@@ -103,32 +103,6 @@ assumed.
 *--help*
 	Print the usage summary and exit.
 
-## Deprecated aliases
-
-The 6.x invocation style is accepted by 7.0 with a warning on standard error
-and will be removed in 8.0:
-
-*resize_gpu_bars.sh*, *resize_gpu_bars.sh --force*
-	*resize-gpu-bars resize*, *resize-gpu-bars resize --force*
-
-*resize_gpu_bars.sh --status*
-	*resize-gpu-bars status*
-
-*resize_gpu_bars.sh --diagnose-only*
-	*resize-gpu-bars diagnose*
-
-*resize_gpu_bars.sh --dry-run*
-	*resize-gpu-bars dry-run*
-
-*resize_gpu_bars.sh --revert*
-	*resize-gpu-bars revert*
-
-*resize-gpu-bars-check* [*-1*]
-	*resize-gpu-bars check* [*-1*]
-
-_/usr/sbin/resize_gpu_bars.sh_ is a symbolic link to *resize-gpu-bars* in 7.0
-and disappears in 8.0.
-
 # EXIT STATUS
 
 *0*

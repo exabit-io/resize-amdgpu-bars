@@ -85,7 +85,7 @@ edge cases found in the 6.2 audit. Scope is fixed: AMD GPUs driven by
   the topology. Full MIT licence text in `debian/copyright`.
 - Build-time check that the tool's version equals the changelog version.
 - `debian/tests/control` runs the harness and the style fixture under
-  autopkgtest; `debian/NEWS` entry for the rename.
+  autopkgtest.
 - Unit and package descriptions no longer name a machine model; the Mac Pro
   appears in the README as the reference platform.
 
@@ -95,9 +95,6 @@ edge cases found in the 6.2 audit. Scope is fixed: AMD GPUs driven by
   `--force` for non-interactive), `status`, `check [-1]`, `dry-run`,
   `diagnose`, `revert`, plus `--version` and `--help`. The separate
   `resize-gpu-bars-check` folds in as `check`.
-- The 6.x flags (`--force`, `--status`, `--diagnose-only`, `--dry-run`,
-  `--revert`) and the `resize_gpu_bars.sh` name are kept as deprecated
-  aliases that warn on use. They are removed in 8.0.
 - `check` counts distinct XGMI hive ids instead of "Add node" lines (which
   double-counted on a re-run), drops the legacy `all-large` plan name from
   its acceptance, and no longer parses `ls`.
