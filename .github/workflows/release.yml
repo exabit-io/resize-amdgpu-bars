@@ -1,4 +1,4 @@
-# Release: on a v* tag, build the Debian package and attach it to the
+# Release: on a version tag (1.0, or v1.0), build the Debian package and attach it to the
 # GitHub release for that tag (to-do 9.3). The apt repository is fed from
 # that asset by hand for now; the commented stanza at the end shows the
 # equivalent of the local publish.sh.
@@ -7,7 +7,8 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'
+      - '[0-9]*'
+      - 'v[0-9]*'
 
 permissions:
   contents: write
