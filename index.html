@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>resize-amdgpu-bars apt repository</title>
+<style>body{font:15px/1.5 system-ui,sans-serif;max-width:46em;margin:3em auto;padding:0 1em}pre{background:#f4f4f4;padding:.8em;overflow-x:auto}</style></head>
+<body>
+<h1>resize-amdgpu-bars apt repository</h1>
+<p>Signed Debian packages for <a href="https://github.com/exabit-io/resize-amdgpu-bars">resize-amdgpu-bars</a>,
+Resizable BAR for AMD GPUs behind PCIe switches. Published by Exabit, Inc. from the project's GitHub releases.</p>
+<pre>sudo install -d -m 755 /etc/apt/keyrings
+curl -fsSL https://exabit-io.github.io/resize-amdgpu-bars/keys/resize-amdgpu-bars.gpg \
+    | sudo tee /etc/apt/keyrings/resize-amdgpu-bars.gpg &gt; /dev/null
+echo 'deb [signed-by=/etc/apt/keyrings/resize-amdgpu-bars.gpg] https://exabit-io.github.io/resize-amdgpu-bars stable main' \
+    | sudo tee /etc/apt/sources.list.d/resize-amdgpu-bars.list
+sudo apt update
+sudo apt install resize-amdgpu-bars</pre>
+<p>Signing key: Exabit, Inc. apt repository &lt;packages@exabit.io&gt;, fingerprint
+<code>6043 AD7B 3533 F615 C15F 48D0 4723 1665 0F4B E230</code>
+(<a href="keys/resize-amdgpu-bars.asc">ASCII-armoured</a>, <a href="keys/resize-amdgpu-bars.gpg">binary</a>).
+Suite <code>stable</code>, component <code>main</code>; the package is architecture-independent.</p>
+<p><a href="dists/stable/">dists/stable/</a> &middot; <a href="pool/main/resize-amdgpu-bars/">pool/</a></p>
+</body></html>

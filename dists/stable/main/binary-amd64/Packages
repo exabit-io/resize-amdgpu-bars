@@ -1,0 +1,40 @@
+Package: resize-amdgpu-bars
+Architecture: all
+Version: 1.1
+Priority: optional
+Section: admin
+Maintainer: Exabit Networks <packages@exabit.io>
+Installed-Size: 179
+Depends: bash (>= 5), pciutils, kmod, systemd
+Recommends: initramfs-tools, grub2-common
+Filename: pool/main/resize-amdgpu-bars/resize-amdgpu-bars_1.1_all.deb
+Size: 66200
+MD5sum: 59d480e5f048565ea963aac5bf4bf849
+SHA1: 1b0aef43a67b5db0cd1063bba7b06c27379fe8b1
+SHA256: 1b037f81b132d621a2f430088cc886865ddae90a41929dfefd69714a19333d36
+SHA512: f31ba034037431f7149f67412ccc8241985c819b25b72a49fa94f5c55ba2b00317f5145dc14fa114d453e0263242e849ac880168ba40b59d93d7eefafd9878ff
+Homepage: https://github.com/exabit-io/resize-amdgpu-bars
+Description: Resizable BAR for AMD GPUs behind PCIe switches
+ Enlarges the CPU-visible VRAM aperture (BAR0) of every AMD GPU handled by
+ the amdgpu driver to the largest size the device supports, on machines
+ where neither the firmware nor the driver's own resize path can do it:
+ GPUs that sit behind a PCIe switch (an on-board PLX switch on a dual-die
+ card, an expansion chassis, a Thunderbolt enclosure), several bridge
+ windows deep, so that a bare Resizable BAR register write leaves the BAR
+ unassigned because the windows above it never grow.
+ .
+ It programs the new size, removes the highest PCI subtree that contains
+ nothing but GPU functions, and rescans that subtree on its own root bus
+ with pci=realloc so the kernel re-sizes the bridge windows; nothing else
+ on the bus is touched and no global rescan is ever issued. amdgpu is then
+ loaded exactly once, behind a bind guard that never hands the driver a
+ device whose BAR did not come back (that would hang the boot in an SR-IOV
+ mailbox wait). GPUs, Resizable BAR capabilities and bridge topology are
+ discovered at run time; GPUs without the capability, and any non-AMD
+ device, are left alone.
+ .
+ Ships a boot-time systemd unit, a modprobe blacklist that defers the
+ amdgpu autoload until the unit has run, and a GRUB drop-in adding
+ pci=realloc to the kernel command line. Reference platform: dual-die MPX
+ modules in an Apple Mac Pro (2019).
+
