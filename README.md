@@ -205,8 +205,29 @@ scope for 1.0.
 ## Install
 
 The package needs `bash`, `pciutils`, `kmod` and `systemd`, and uses
-`initramfs-tools` and `grub2-common` when they are present. Install the
-`.deb` from the release page:
+`initramfs-tools` and `grub2-common` when they are present.
+
+From the apt repository, which the release workflow feeds from every
+release and GitHub Pages serves:
+
+```
+sudo install -d -m 755 /etc/apt/keyrings
+curl -fsSL https://exabit-io.github.io/resize-amdgpu-bars/keys/resize-amdgpu-bars.gpg \
+    | sudo tee /etc/apt/keyrings/resize-amdgpu-bars.gpg > /dev/null
+echo 'deb [signed-by=/etc/apt/keyrings/resize-amdgpu-bars.gpg] https://exabit-io.github.io/resize-amdgpu-bars stable main' \
+    | sudo tee /etc/apt/sources.list.d/resize-amdgpu-bars.list
+sudo apt update
+sudo apt install resize-amdgpu-bars
+```
+
+The repository is signed by the Exabit, Inc. apt repository key,
+`packages@exabit.io`, fingerprint
+`6043 AD7B 3533 F615 C15F 48D0 4723 1665 0F4B E230`; the same key in
+ASCII armour is at `keys/resize-amdgpu-bars.asc` next to the binary one.
+Suite `stable`, component `main`, architecture `amd64` (the package
+itself is architecture-independent).
+
+Or install the `.deb` from the release page:
 
 ```
 sudo apt install ./resize-amdgpu-bars_1.1_all.deb

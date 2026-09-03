@@ -2,6 +2,24 @@
 
 Maintainer tools that are not installed by the package.
 
+## apt-publish.sh
+
+Indexes and signs the flat apt repository on the `apt-repo` branch, which
+GitHub Pages serves at https://exabit-io.github.io/resize-amdgpu-bars.
+The release workflow's `publish-apt` job runs it with the release's
+`.deb`; by hand it is
+
+```
+git worktree add ../apt-repo apt-repo
+GNUPGHOME=/path/to/exabit-apt-keyring \
+    tools/apt-publish.sh --key 6043AD7B3533F615C15F48D0472316650F4BE230 \
+    ../apt-repo resize-amdgpu-bars_1.1_all.deb
+```
+
+then commit and push `../apt-repo`. Suite `stable`, component `main`,
+architecture `amd64`; the key is the Exabit, Inc. apt repository key,
+`packages@exabit.io`, never a personal key. Needs `apt-utils` and `gpg`.
+
 ## experiment-resource0-resize.sh
 
 **Question it answers:** does the kernel's own in-place Resizable BAR path,

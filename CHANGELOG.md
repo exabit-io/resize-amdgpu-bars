@@ -4,6 +4,23 @@ Upstream history of resize-amdgpu-bars. Versions before 6.0 were a single
 script maintained on the reference machine and never packaged; their entries
 are reconstructed from the script headers.
 
+## Unreleased
+
+- Signed apt repository, served by GitHub Pages at
+  https://exabit-io.github.io/resize-amdgpu-bars (suite `stable`,
+  component `main`). The release workflow feeds it from each release's
+  `.deb` through the new `tools/apt-publish.sh`; the signing key is the
+  Exabit, Inc. apt repository key, `packages@exabit.io`,
+  `6043 AD7B 3533 F615 C15F 48D0 4723 1665 0F4B E230`. README "Install"
+  starts with it.
+- README and tools/README carry the measured result of the sysfs
+  `resource0_resize` experiment on a dual-die module: `ENOSPC` on every
+  kernel, because the shared bridge window is pinned by the sibling die's
+  assigned BARs and is never released. The known-issues entry that called
+  it unmeasured is gone, as is a stale line about 6.x aliases.
+- `tools/experiment-resource0-resize.sh` no longer prints "No such file or
+  directory" for an absent sysfs attribute.
+
 ## 1.1 (2026-09-03)
 
 Hardening and the fixes from the 1.0 boot audit. No change to the resize

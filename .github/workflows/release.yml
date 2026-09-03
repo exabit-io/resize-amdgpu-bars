@@ -1,7 +1,11 @@
-# Release: on a version tag (1.0, or v1.0), build the Debian package and attach it to the
-# GitHub release for that tag (to-do 9.3). The apt repository is fed from
-# that asset by hand for now; the commented stanza at the end shows the
-# equivalent of the local publish.sh.
+# Release: on a version tag (1.1, or v1.1) build the Debian package, attach
+# it to the GitHub release for that tag, then publish that .deb to the apt
+# repository on the apt-repo branch, which GitHub Pages serves at
+# https://exabit-io.github.io/resize-amdgpu-bars (to-do 9.3).
+#
+# Re-publishing an existing release to the apt repository (a new key, a
+# repaired index) is `gh workflow run release.yml -f tag=1.1`: only the
+# publish job runs then, the release is left alone.
 name: Release
 
 on:
@@ -9,6 +13,12 @@ on:
     tags:
       - '[0-9]*'
       - 'v[0-9]*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: existing release tag to publish to the apt repository
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -16,6 +26,7 @@ permissions:
 jobs:
   build-and-attach:
     name: build deb and attach to the release
+    if: github.event_name == 'push'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -61,64 +72,59 @@ jobs:
           path: dist/
           if-no-files-found: error
 
-# --------------------------------------------------------------------------
-# Feeding the apt repository from the release asset (NOT automated yet).
-#
-# The repository used today is a flat, reprepro-free layout maintained by a
-# 40-line publish.sh with apt-ftparchive and a detached-signing GPG key:
-#
-#   pool/main/<package>/<package>_<version>_all.deb
-#   dists/noble/main/binary-amd64/Packages{,.gz,.xz}
-#   dists/noble/{Release,Release.gpg,InRelease}
-#   keys/<repo>.gpg                       public key for clients
-#
-# The equivalent job would be:
-#
-#  publish-apt:
-#    needs: build-and-attach
-#    runs-on: ubuntu-24.04
-#    steps:
-#      - uses: actions/checkout@v4
-#        with:
-#          ref: apt-repo            # a branch (or a separate repository)
-#                                   # holding pool/ and dists/
-#      - name: Fetch the deb from the release
-#        env:
-#          GH_TOKEN: ${{ github.token }}
-#        run: |
-#          gh release download "$GITHUB_REF_NAME" --pattern '*.deb' \
-#            --dir pool/main/resize-amdgpu-bars
-#      - name: Import the signing key
-#        # A dedicated apt signing key stored as a repository secret; its
-#        # public half is committed as keys/resize-amdgpu-bars.gpg.
-#        run: |
-#          printf '%s' "${{ secrets.APT_SIGNING_KEY }}" | gpg --batch --import
-#      - name: Index and sign (what publish.sh does)
-#        run: |
-#          bin=dists/noble/main/binary-amd64
-#          mkdir -p "$bin"
-#          apt-ftparchive packages pool > "$bin/Packages"
-#          gzip -9kf "$bin/Packages"
-#          xz -9kf "$bin/Packages"
-#          apt-ftparchive \
-#            -o APT::FTPArchive::Release::Origin="resize-amdgpu-bars" \
-#            -o APT::FTPArchive::Release::Label="resize-amdgpu-bars" \
-#            -o APT::FTPArchive::Release::Suite="noble" \
-#            -o APT::FTPArchive::Release::Codename="noble" \
-#            -o APT::FTPArchive::Release::Architectures="amd64" \
-#            -o APT::FTPArchive::Release::Components="main" \
-#            release dists/noble > dists/noble/Release
-#          gpg --batch --yes --detach-sign --armor \
-#            -o dists/noble/Release.gpg dists/noble/Release
-#          gpg --batch --yes --clearsign \
-#            -o dists/noble/InRelease dists/noble/Release
-#      - name: Publish
-#        # Commit pool/ and dists/ back to the apt-repo branch and serve it
-#        # with GitHub Pages, or rsync to the web host that serves
-#        # "deb [signed-by=/etc/apt/keyrings/resize-amdgpu-bars.gpg]
-#        #  https://HOST/apt noble main".
-#        run: echo "not automated: decide hosting first (9.3 follow-up)"
-#
-# Open before automating: where the repository is hosted (Pages vs. a host
-# of our own), which key signs it (never the maintainer's personal key),
-# and whether the kernel debs (10.3, private repo) stay out of it. They do.
+  publish-apt:
+    name: publish the release deb to the apt repository
+    needs: build-and-attach
+    # runs after a successful build on a tag push, or alone on dispatch
+    if: >-
+      !cancelled() &&
+      (needs.build-and-attach.result == 'success' ||
+       github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    concurrency: apt-repo
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - name: Check out the tools (this ref)
+        uses: actions/checkout@v4
+      - name: Check out the apt-repo branch
+        uses: actions/checkout@v4
+        with:
+          ref: apt-repo
+          path: apt-repo
+      - name: Install apt-utils
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends apt-utils
+      - name: Fetch the release deb
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$TAG" --pattern '*_all.deb' --dir dist
+          ls -l dist
+      - name: Import the signing key
+        # The Exabit, Inc. apt repository key (packages@exabit.io,
+        # 6043 AD7B 3533 F615 C15F 48D0 4723 1665 0F4B E230), private half
+        # in the APT_SIGNING_KEY repository secret; its public half is
+        # keys/resize-amdgpu-bars.gpg on the apt-repo branch.
+        env:
+          APT_SIGNING_KEY: ${{ secrets.APT_SIGNING_KEY }}
+        run: |
+          printf '%s\n' "$APT_SIGNING_KEY" | gpg --batch --quiet --import
+          gpg --batch --list-secret-keys --with-colons \
+            | grep -q '^sec' || { echo 'no signing key imported' >&2; exit 1; }
+      - name: Index and sign
+        run: tools/apt-publish.sh apt-repo dist/*_all.deb
+      - name: The published index must verify with the served public key
+        run: |
+          gpg --no-default-keyring \
+            --keyring ./apt-repo/keys/resize-amdgpu-bars.gpg \
+            --verify apt-repo/dists/stable/InRelease
+      - name: Commit and push the apt-repo branch
+        run: |
+          cd apt-repo
+          git config user.name 'Exabit release workflow'
+          git config user.email 'packages@exabit.io'
+          git add -A
+          git commit -m "Publish resize-amdgpu-bars $TAG"
+          git push origin HEAD:apt-repo
