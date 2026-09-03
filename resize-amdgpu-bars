@@ -1050,8 +1050,12 @@ preflight() {
     else log_err "Kernel NOT booted with pci=realloc, required for bridge window sizing."; exit 1; fi
     log_info "Kernel $(uname -r); script v$VERSION; config ${CONFIG_FILE}$( [[ -r $CONFIG_FILE ]] || echo ' (absent, defaults)')"
     if driver_loaded; then
-        log_warn "$DRIVER is already loaded; GPUs will be unbound before the resize (double-init path)."
-        log_info "Tip: /etc/modprobe.d/amdgpu-blacklist.conf avoids this."
+        if [[ -r $STATE_DIR/summary ]]; then
+            log_info "$DRIVER is loaded; this boot's resize already ran (see $STATE_DIR/summary)."
+        else
+            log_warn "$DRIVER is already loaded; a resize would unbind every GPU first (double-init path)."
+            log_info "Tip: the blacklist in /usr/lib/modprobe.d/resize-amdgpu-bars.conf must be in the initramfs (update-initramfs -u -k all)."
+        fi
     else
         log_ok "$DRIVER not loaded (blacklist active); clean single-init path."
     fi
