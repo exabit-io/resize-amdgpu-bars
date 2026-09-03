@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# resize-gpu-bars: Resizable BAR for AMD GPUs behind PCIe switches
+# resize-amdgpu-bars: Resizable BAR for AMD GPUs behind PCIe switches
 #
 # WHAT THIS DOES
 #   Finds every AMD GPU in the machine, enlarges its BAR0 (the CPU-visible
@@ -59,7 +59,7 @@
 #   compatibility section.
 #
 # SUBCOMMANDS, OPTIONS, CONFIGURATION, EXIT STATUS
-#   See usage() below (resize-gpu-bars --help) and the man page.
+#   See usage() below (resize-amdgpu-bars --help) and the man page.
 #
 # REQUIREMENTS
 #   root; kernel booted with pci=realloc; pciutils (lspci/setpci); util-linux
@@ -77,26 +77,26 @@ shopt -s nullglob
 export LC_ALL=C
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
 
-VERSION="7.0"
+VERSION="1.0"
 DRIVER=amdgpu                  # the only driver this tool knows (scope decision)
-LOCK_FILE=/run/lock/resize-gpu-bars.lock
-SERVICE_NAME=resize-gpu-bars.service
-CHECK_TOOL=/usr/sbin/resize-gpu-bars-check   # "check" subcommand, until it folds in
+LOCK_FILE=/run/lock/resize-amdgpu-bars.lock
+SERVICE_NAME=resize-amdgpu-bars.service
+CHECK_LOG=${RESIZE_AMDGPU_BARS_CHECK_LOG:-/var/log/resize-amdgpu-bars/kernel-matrix.log}
 
-# Test-only overrides (used by tests/test_resize_gpu_bars.sh, never in
-# production): RESIZE_GPU_BARS_SYSFS points at a fake sysfs tree,
-# RESIZE_GPU_BARS_STATE_DIR at a scratch runtime directory and
-# RESIZE_GPU_BARS_CONFIG at a configuration file other than the system one;
-# RESIZE_GPU_BARS_ALIAS_FILE replaces the driver's PCI alias table
+# Test-only overrides (used by tests/test_resize_amdgpu_bars.sh, never in
+# production): RESIZE_AMDGPU_BARS_SYSFS points at a fake sysfs tree,
+# RESIZE_AMDGPU_BARS_STATE_DIR at a scratch runtime directory and
+# RESIZE_AMDGPU_BARS_CONFIG at a configuration file other than the system one;
+# RESIZE_AMDGPU_BARS_ALIAS_FILE replaces the driver's PCI alias table
 # (modules.alias syntax, or one pattern per line).
-SYSFS=${RESIZE_GPU_BARS_SYSFS:-/sys}
-STATE_DIR=${RESIZE_GPU_BARS_STATE_DIR:-/run/resize-gpu-bars}
-CONFIG_FILE=${RESIZE_GPU_BARS_CONFIG:-/etc/default/resize-gpu-bars}
-ALIAS_FILE=${RESIZE_GPU_BARS_ALIAS_FILE:-}
+SYSFS=${RESIZE_AMDGPU_BARS_SYSFS:-/sys}
+STATE_DIR=${RESIZE_AMDGPU_BARS_STATE_DIR:-/run/resize-amdgpu-bars}
+CONFIG_FILE=${RESIZE_AMDGPU_BARS_CONFIG:-/etc/default/resize-amdgpu-bars}
+ALIAS_FILE=${RESIZE_AMDGPU_BARS_ALIAS_FILE:-}
 
 # Defaults, overridable from CONFIG_FILE.
 MAX_SIZE_INDEX=""
-EXCLUDE_BDFS=""
+EXCLUDE_GPUS=""
 FORCE_PLAN=""
 MODPROBE_TIMEOUT=180
 PROBE_WAIT=60
@@ -145,8 +145,8 @@ validate_config() {
     for v in MODPROBE_TIMEOUT PROBE_WAIT RESCAN_WAIT MAX_ROUNDS; do
         [[ ${!v} =~ ^[1-9][0-9]*$ ]] || { log_err "$v='${!v}' in $CONFIG_FILE: must be a positive integer"; bad=1; }
     done
-    for b in $EXCLUDE_BDFS; do
-        [[ $b =~ ^[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$ ]] || { log_err "EXCLUDE_BDFS entry '$b' in $CONFIG_FILE: must be a PCI address like 0000:0b:00.0"; bad=1; }
+    for b in $EXCLUDE_GPUS; do
+        [[ $b =~ ^[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$ ]] || { log_err "EXCLUDE_GPUS entry '$b' in $CONFIG_FILE: must be a PCI address like 0000:0b:00.0"; bad=1; }
     done
     case $FORCE_PLAN in
         ""|all-max|baseline) ;;
@@ -429,7 +429,7 @@ load_driver_aliases() {
     if [[ -n $ALIAS_FILE ]]; then
         src=$ALIAS_FILE
     elif modinfo -F alias "$DRIVER" >/dev/null 2>&1; then
-        src=$(mktemp -p "${TMPDIR:-/tmp}" "resize-gpu-bars.XXXXXX") || return 1
+        src=$(mktemp -p "${TMPDIR:-/tmp}" "resize-amdgpu-bars.XXXXXX") || return 1
         modinfo -F alias "$DRIVER" 2>/dev/null | sed 's/^/alias /; s/$/ '"$DRIVER"'/' > "$src"
         local tmp=$src
     else
@@ -496,7 +496,7 @@ discover_gpus() {
         if ! driver_claims "$bdf"; then
             log_info "  $bdf $(lspci -mm -s "$bdf" 2>/dev/null | awk -F'"' '{print $6}'): not an $DRIVER device, skipped"; continue
         fi
-        if [[ " $EXCLUDE_BDFS " == *" $bdf "* ]]; then
+        if [[ " $EXCLUDE_GPUS " == *" $bdf "* ]]; then
             log_info "  $bdf excluded by configuration"; continue
         fi
         GPUS+=("$bdf")
@@ -1050,8 +1050,12 @@ preflight() {
     else log_err "Kernel NOT booted with pci=realloc, required for bridge window sizing."; exit 1; fi
     log_info "Kernel $(uname -r); script v$VERSION; config ${CONFIG_FILE}$( [[ -r $CONFIG_FILE ]] || echo ' (absent, defaults)')"
     if driver_loaded; then
-        log_warn "$DRIVER is already loaded; GPUs will be unbound before the resize (double-init path)."
-        log_info "Tip: /etc/modprobe.d/amdgpu-blacklist.conf avoids this."
+        if [[ -r $STATE_DIR/summary ]]; then
+            log_info "$DRIVER is loaded; this boot's resize already ran (see $STATE_DIR/summary)."
+        else
+            log_warn "$DRIVER is already loaded; a resize would unbind every GPU first (double-init path)."
+            log_info "Tip: the blacklist in /usr/lib/modprobe.d/resize-amdgpu-bars.conf must be in the initramfs (update-initramfs -u -k all)."
+        fi
     else
         log_ok "$DRIVER not loaded (blacklist active); clean single-init path."
     fi
@@ -1166,7 +1170,7 @@ print_status() {
 # ---------------------------------------------------------------------------
 usage() {
     cat <<EOF
-Usage: resize-gpu-bars [SUBCOMMAND] [OPTION]...
+Usage: resize-amdgpu-bars [SUBCOMMAND] [OPTION]...
 
 Resizable BAR for AMD GPUs behind PCIe switches. Programs every amdgpu
 GPU's BAR0 to the largest size it supports, re-enumerates only the PCI
@@ -1188,10 +1192,10 @@ Options:
   --version   print the version and exit
   --help      print this help and exit
 
-Configuration file: /etc/default/resize-gpu-bars (shell syntax, all optional)
+Configuration file: /etc/default/resize-amdgpu-bars (shell syntax, all optional)
   MAX_SIZE_INDEX    cap every GPU at this size index (2^(n+20) bytes:
                     15 = 32GiB, 14 = 16GiB, 13 = 8GiB); empty = device maximum
-  EXCLUDE_BDFS      "0000:0b:00.0 ..." GPUs to leave completely alone
+  EXCLUDE_GPUS      "0000:0b:00.0 ..." GPUs to leave completely alone
   FORCE_PLAN        all-max | baseline: use exactly that plan, no negotiation
   MODPROBE_TIMEOUT  seconds modprobe may take (180)
   PROBE_WAIT        seconds to wait for every unguarded GPU to bind (60)
@@ -1204,13 +1208,94 @@ Exit status:
      GPU went missing; the driver was loaded on the rest
   1  error: refused run, bad configuration, driver load failed, or a GPU
      was left with a size the kernel has not seen
-
-Deprecated (removed in 8.0): --resize, --diagnose-only, --dry-run, --revert,
---status; use the subcommand of the same name.
 EOF
 }
-# deprecated OLD NEW -- one stderr line per use of a pre-7.0 flag
-deprecated() { log_warn "'$1' is deprecated and will be removed in 8.0; use '$2'"; }
+# ---------------------------------------------------------------------------
+# check: one-line verdict for a boot from the service journal, the kernel
+# log and (for the current boot) live sysfs, appended to CHECK_LOG so boots
+# on different kernels and cards can be compared. Read-only apart from the
+# log file.
+# ---------------------------------------------------------------------------
+check_journal() { journalctl -b "$1" -u "$SERVICE_NAME" --no-pager -o cat 2>/dev/null; }
+check_kernel_log() { journalctl -b "$1" -k --no-pager -o cat 2>/dev/null; }
+
+# check_hive_count -- distinct XGMI hive ids from sysfs, one per hive however
+# many dies it has ("XGMI: Add node" journal lines double-count on a reload)
+check_hive_count() {
+    local f id
+    local -A seen=()
+    for f in "$SYSFS"/bus/pci/devices/*/xgmi_hive_info/xgmi_hive_id; do
+        [[ -r $f ]] || continue
+        id=$(<"$f")
+        [[ -n $id ]] && seen[$id]=1
+    done
+    echo "${#seen[@]}"
+}
+# check_kfd_count -- KFD topology node count
+check_kfd_count() {
+    local d n=0
+    for d in "$SYSFS"/class/kfd/kfd/topology/nodes/*/; do
+        [[ -d $d ]] && n=$((n + 1))
+    done
+    echo "$n"
+}
+# check_windows STATUS_LINE -- "root=SIZE ..." for every re-enumeration root
+# named in a status line (the prefetchable window of the root port)
+check_windows() {
+    local r w out=""
+    while read -r r; do
+        [[ -z $r || $r == none ]] && continue
+        w=$(lspci -vvs "$r" 2>/dev/null | sed -n 's/.*Prefetchable memory behind bridge: .*\[size=\([^]]*\)\].*/\1/p')
+        out+="$r=${w:-?} "
+    done < <(grep -oE 'root=[^ ]+' <<<"$1" | cut -d= -f2 | sort -u)
+    echo "${out% }"
+}
+# cmd_check [-1] -- prints the verdict line for this boot (or the previous
+# one with -1, live-only fields marked) and appends it to CHECK_LOG for the
+# current boot; returns 1 on a bad argument or an unwritable log
+cmd_check() {
+    local b=0 j k kver btime plan large drvless success rejected traces sriov losers
+    local status bar0 wins kfd hives verdict line
+    case ${1:-} in
+        "") ;;
+        -1) b=-1 ;;
+        *) log_err "check: unknown argument '$1' (only -1 is accepted)"; return 1 ;;
+    esac
+    j=$(check_journal "$b"); k=$(check_kernel_log "$b")
+    kver=$(head -1 <<<"$k" | sed -E 's/^Linux version ([^ ]+).*/\1/')
+    btime=$(journalctl -b "$b" --no-pager -o short-iso 2>/dev/null | head -1 | cut -c1-19)
+    plan=$(sed -n 's/.*Plan achieved *: *//p' <<<"$j" | tail -1)
+    large=$(sed -n 's/.*Large BARs *: *//p' <<<"$j" | tail -1 | tr -d ' ')
+    drvless=$(sed -n 's/.*Driverless *: *//p' <<<"$j" | tail -1 | tr -d ' ')
+    success=$(grep -c 'SUCCESS:' <<<"$j")
+    rejected=$(grep -c 'rejected' <<<"$j")
+    traces=$(grep -cE 'Call Trace|BUG:|Oops|hung task|blocked for more than' <<<"$k")
+    sriov=$(grep -cE 'trn=2 ACK|MCBP is enabled' <<<"$k")
+    losers=$(grep -o 'unassigned BARs on: .*' <<<"$j" | head -1)
+    if (( b == 0 )); then
+        status=$(print_status 2>/dev/null)
+        bar0=$(grep -oE 'bar0=[^,]+' <<<"$status" | cut -d= -f2 | tr '\n' ' ')
+        wins=$(check_windows "$status")
+        kfd=$(check_kfd_count); hives=$(check_hive_count)
+    else
+        bar0="(live only)"; wins="(live only)"; kfd="(live only)"; hives="(live only)"
+    fi
+    case "$plan:$success" in
+        all-max:1)     verdict="WORKS" ;;
+        none:*)        verdict="FAILS (bind guard held)" ;;
+        none-needed:*) verdict="NO RESIZABLE GPU" ;;
+        *)             verdict="OTHER - inspect" ;;
+    esac
+    (( traces > 0 || sriov > 0 )) && verdict="$verdict + TRACE/SRIOV NOISE - inspect"
+    line="$btime  $kver  verdict=$verdict  plan=${plan:-?}  large=${large:-?}  driverless=${drvless:-?}  windows=$wins  bar0=${bar0:-?}  kfd=$kfd  xgmi_hives=$hives  traces=$traces  rejected=$rejected  $losers"
+    echo "$line"
+    (( b == 0 )) || return 0
+    if mkdir -p "$(dirname "$CHECK_LOG")" 2>/dev/null && echo "$line" >> "$CHECK_LOG" 2>/dev/null; then
+        echo "(appended to $CHECK_LOG)"
+    else
+        log_err "Could not append to $CHECK_LOG"; return 1
+    fi
+}
 
 # run_exit_status -- prints the exit status of a completed run: 0 full
 # success, 2 degraded (a GPU fenced off, driverless or missing)
@@ -1226,21 +1311,17 @@ main() {
         arg=$1; shift
         case $arg in
             resize|status|dry-run|diagnose|revert) cmd=$arg ;;
-            check)
-                [[ -x $CHECK_TOOL ]] || { log_err "$CHECK_TOOL is not installed"; return 1; }
-                exec "$CHECK_TOOL" "$@" ;;
+            check) cmd_check "$@"; return ;;
             --force) force=1 ;;
-            --version|-V) echo "resize-gpu-bars $VERSION"; return 0 ;;
+            --version|-V) echo "resize-amdgpu-bars $VERSION"; return 0 ;;
             --help|-h) usage; return 0 ;;
-            --resize|--status|--dry-run|--revert) deprecated "$arg" "${arg#--}"; cmd=${arg#--} ;;
-            --diagnose-only) deprecated "$arg" diagnose; cmd=diagnose ;;
             *) log_err "Unknown argument '$arg' (try --help)"; return 1 ;;
         esac
     done
     install_traps
     if [[ $cmd == status ]]; then print_status; RUN_COMPLETE=1; return 0; fi
 
-    log_info "resize-gpu-bars $VERSION: discovery, plan negotiation, bind guard, bounded driver load"
+    log_info "resize-amdgpu-bars $VERSION: discovery, plan negotiation, bind guard, bounded driver load"
     # One instance at a time; a manual run under the boot-time service would
     # re-enumerate the bus underneath it and make both reports wrong.
     mkdir -p "$(dirname "$LOCK_FILE")"

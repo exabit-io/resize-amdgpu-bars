@@ -1,11 +1,11 @@
 #!/bin/sh
-# postinst for resize-gpu-bars. The unit is enabled by the debhelper snippet
+# postinst for resize-amdgpu-bars. The unit is enabled by the debhelper snippet
 # below but NEVER started here: a start unbinds and re-initialises every AMD
 # GPU on a live box (the 6.0 -> 6.1 upgrade did exactly that). It runs at the
 # next boot.
 set -e
 
-warn() { echo "resize-gpu-bars: $*" >&2; }
+warn() { echo "resize-amdgpu-bars: $*" >&2; }
 
 case "$1" in
   configure)
@@ -27,7 +27,7 @@ case "$1" in
       fi
     else
       warn "update-grub not found; add pci=realloc to the kernel command line by hand"
-      warn "(see resize-gpu-bars(8) for rEFInd and OpenCore)."
+      warn "(see resize-amdgpu-bars(8) for rEFInd and OpenCore)."
     fi
     if ! grep -qw pci=realloc /proc/cmdline 2>/dev/null; then
       warn "reboot required (pci=realloc and the amdgpu blacklist take effect at boot)."
@@ -36,7 +36,7 @@ case "$1" in
       fi
     fi
     warn "the service is enabled and runs at the next boot; the package never starts it"
-    warn "(a start unbinds and re-initialises every AMD GPU). To apply now: systemctl start resize-gpu-bars.service"
+    warn "(a start unbinds and re-initialises every AMD GPU). To apply now: systemctl start resize-amdgpu-bars.service"
     ;;
 esac
 

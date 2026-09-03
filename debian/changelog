@@ -1,59 +1,9 @@
-resize-gpu-bars (7.0) unstable; urgency=medium
+resize-amdgpu-bars (1.0) unstable; urgency=medium
 
-  * Changelog distribution is "unstable" from this entry on: the package is
-    published from one public repository for every Debian derivative with
-    GRUB (Ubuntu 24.04 LTS being the reference platform), so a per-suite
-    distribution field would only mislabel identical builds.
-  * Packaging changes only in this entry; the 7.0 script, harness and
-    documentation changes are recorded separately.
-  * Layout: the tool installs as /usr/sbin/resize-gpu-bars with a
-    resize_gpu_bars.sh compatibility symlink for this release (removed in
-    8.0, see NEWS); the harness lives in /usr/share/resize-gpu-bars/tests;
-    man pages are generated from man/*.scd with scdoc at build time.
-  * The amdgpu blacklist moves from the conffile
-    /etc/modprobe.d/amdgpu-blacklist.conf to
-    /usr/lib/modprobe.d/resize-gpu-bars.conf so it is removed with the
-    package (a removed box no longer boots without a GPU driver); the old
-    conffile is dropped on upgrade via dpkg-maintscript-helper. Comment
-    scrubbed of machine-specific lore.
-  * postinst and postrm run "update-initramfs -u -k all" so every installed
-    kernel's initrd carries the blacklist, not only the newest one; errors
-    are reported (postrm never fails the removal). postinst still never
-    starts the unit and still says when a reboot is required.
-  * Unit: ExecStart calls "resize-gpu-bars resize --force";
-    SuccessExitStatus=2 (degraded: bind guard holding) so boot is not marked
-    failed; "ExecStartPre=udevadm settle" dropped (it timed out every boot
-    and looked like a stall); Documentation=man:resize-gpu-bars(8);
-    ConditionPathExists dropped; hardening added (UMask, PrivateNetwork,
-    RestrictNamespaces, RestrictRealtime, RestrictSUIDSGID,
-    LockPersonality, SystemCallArchitectures, ProtectClock, ProtectHostname,
-    ProtectKernelLogs, ProtectControlGroups, ProtectProc,
-    MemoryDenyWriteExecute, RestrictAddressFamilies, IPAddressDeny);
-    ProtectKernelModules and ProtectKernelTunables stay off by design.
-    systemd-analyze security: 7.5 "exposed" -> 4.0 "OK".
-  * control: Homepage, Vcs-Git, Vcs-Browser, Standards-Version 4.6.2 (the
-    newest this lintian knows); scope and topology in the description; no
-    machine name in the synopsis; scdoc build dependency.
-  * debian/rules refuses to build when the script's VERSION does not equal
-    the changelog version.
-  * autopkgtest (debian/tests/control): the offline harness against the
-    installed binary, and the shell style fixture when the tree ships it.
-  * debian/copyright carries the full MIT licence text.
-  * resize-gpu-bars-check: counts distinct XGMI hive ids from sysfs
-    (xgmi_hives=) instead of "XGMI: Add node" journal lines, which
-    double-count on a driver reload; drops the legacy "all-large" verdict;
-    no longer parses ls; calls "resize-gpu-bars status".
-  * /etc/default/resize-gpu-bars: GiB/MiB units, GPU_DRIVER knob removed.
+  * Initial public release. Resizable BAR for AMD GPUs behind PCIe
+    switches: programs the BAR size, re-enumerates only the all-GPU PCI
+    subtrees on their own root bus so the kernel re-sizes the bridge windows,
+    and loads amdgpu once behind a bind guard. The upstream changelog
+    (changelog.gz in the package documentation) records the internal builds.
 
- -- Nikolas Britton <nikolas.britton@gmail.com>  Wed, 02 Sep 2026 21:57:04 +0000
-
-resize-gpu-bars (6.2) noble; urgency=medium
-
-  * Packaging only (script unchanged, v6.1): dh_installsystemd --no-start.
-    The 6.0 -> 6.1 upgrade started the unit because it was in the failed
-    state, which unbound and re-initialised all four GPUs on a running box.
-    The unit is now only enabled; it runs at the next boot, or on an explicit
-    "systemctl start". postinst says so.
-
- -- Nikolas Britton <nikolas.britton@gmail.com>  Wed, 02 Sep 2026 14:11:37 +0000
-
+ -- Exabit Inc. <packages@exabit.io>  Thu, 03 Sep 2026 01:01:10 +0000

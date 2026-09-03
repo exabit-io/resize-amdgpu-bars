@@ -1,13 +1,13 @@
 # Changelog
 
-Upstream history of resize-gpu-bars. Versions before 6.0 were a single
+Upstream history of resize-amdgpu-bars. Versions before 6.0 were a single
 script maintained on the reference machine and never packaged; their entries
 are reconstructed from the script headers.
 
-## 7.0 (unreleased)
+## 1.0 (unreleased)
 
-First public release. Same method as 6.2 with a production finish and the
-edge cases found in the 6.2 audit. Scope is fixed: AMD GPUs driven by
+First public release, as resize-amdgpu-bars. Same method as the internal
+6.2 build with a production finish and the edge cases found in its audit. Scope is fixed: AMD GPUs driven by
 `amdgpu`, nothing else.
 
 ### Correctness and safety
@@ -35,8 +35,8 @@ edge cases found in the 6.2 audit. Scope is fixed: AMD GPUs driven by
 - Non-amdgpu devices are refused at discovery: vendor and class are checked
   against the `amdgpu` module alias table, so a `radeon`-era card is
   reported and skipped.
-- `/etc/default/resize-gpu-bars` is validated when read: integers in range,
-  PCI address syntax for `EXCLUDE_BDFS`, `FORCE_PLAN` in the allowed set. A
+- `/etc/default/resize-amdgpu-bars` is validated when read: integers in range,
+  PCI address syntax for `EXCLUDE_GPUS`, `FORCE_PLAN` in the allowed set. A
   bad value stops the run with a message and exit status 1.
 - An exit handler on EXIT, TERM and INT clears `driver_override`, restores
   memory decode on dirty GPUs, and logs what was left in what state when the
@@ -59,13 +59,13 @@ edge cases found in the 6.2 audit. Scope is fixed: AMD GPUs driven by
 - Home-directory paths, dated session notes and kernel test lore removed
   from every shipped file. History is in this file; kernel facts are in the
   README's compatibility section.
-- The harness's sysfs override is `RESIZE_GPU_BARS_SYSFS`, documented as
-  test-only, alongside `RESIZE_GPU_BARS_STATE_DIR`.
+- The harness's sysfs override is `RESIZE_AMDGPU_BARS_SYSFS`, documented as
+  test-only, alongside `RESIZE_AMDGPU_BARS_STATE_DIR`.
 
 ### Packaging and unit
 
 - The `amdgpu` blacklist moves from `/etc/modprobe.d/amdgpu-blacklist.conf`
-  to `/usr/lib/modprobe.d/resize-gpu-bars.conf`, so it is removed with the
+  to `/usr/lib/modprobe.d/resize-amdgpu-bars.conf`, so it is removed with the
   package (a conffile survived `apt remove` and left the box with no GPU
   driver until purge) and can still be overridden from `/etc/modprobe.d`.
 - `update-initramfs -u -k all` in postinst and postrm; `-u` alone rebuilt
@@ -78,55 +78,57 @@ edge cases found in the 6.2 audit. Scope is fixed: AMD GPUs driven by
   `SystemCallArchitectures`, `ProtectClock`, `ProtectHostname`,
   `ProtectKernelLogs`, `ProtectControlGroups`. `ProtectKernelModules` and
   `ProtectKernelTunables` stay off (modprobe, sysfs writes).
-- `Documentation=man:resize-gpu-bars(8)` in the unit; the redundant
+- `Documentation=man:resize-amdgpu-bars(8)` in the unit; the redundant
   `ConditionPathExists` is gone.
 - `debian/control` gains `Homepage`, `Vcs-Git`, `Vcs-Browser` and a
   current `Standards-Version`; the long description states the scope and
   the topology. Full MIT licence text in `debian/copyright`.
 - Build-time check that the tool's version equals the changelog version.
-- `debian/tests/control` runs the harness and the style fixture under
-  autopkgtest; `debian/NEWS` entry for the rename.
+- `debian/tests/control` runs the harness and the style checks under
+  autopkgtest.
 - Unit and package descriptions no longer name a machine model; the Mac Pro
   appears in the README as the reference platform.
 
 ### Naming and CLI
 
-- One binary, `resize-gpu-bars`, with subcommands `resize` (default;
+- One binary, `resize-amdgpu-bars`, with subcommands `resize` (default;
   `--force` for non-interactive), `status`, `check [-1]`, `dry-run`,
   `diagnose`, `revert`, plus `--version` and `--help`. The separate
-  `resize-gpu-bars-check` folds in as `check`.
-- The 6.x flags (`--force`, `--status`, `--diagnose-only`, `--dry-run`,
-  `--revert`) and the `resize_gpu_bars.sh` name are kept as deprecated
-  aliases that warn on use. They are removed in 8.0.
+  `resize-amdgpu-bars-check` folds in as `check`.
 - `check` counts distinct XGMI hive ids instead of "Add node" lines (which
   double-counted on a re-run), drops the legacy `all-large` plan name from
   its acceptance, and no longer parses `ls`.
 
 ### Documentation
 
-- Manual pages `resize-gpu-bars(8)` and `resize-gpu-bars.conf(5)` from
+- Manual pages `resize-amdgpu-bars(8)` and `resize-amdgpu-bars.conf(5)` from
   scdoc sources under `man/`.
 - README rewritten around the bridge-window problem, with the reference
   platform as the case study, support tiers, every subcommand, a
   configuration reference, troubleshooting, non-GRUB bootloaders and kernel
   compatibility.
-- `CHANGELOG.md`, `CONTRIBUTING.md` (harness, style fixture, boot-test
+- `CHANGELOG.md`, `CONTRIBUTING.md` (harness, style checks, boot-test
   checklist) and `SECURITY.md`.
 
 ### Style and tests
 
 - Formatting pass to the project style guide (tabs, 80 columns, single
   quotes, `printf`, parameter expansion), shellcheck clean at `-S style`,
-  the style fixture vendored under `tests/style/`.
+  the mechanical checks in `tests/style/check.sh`.
 - Mutable globals lowercased, per-group lists as arrays, `while read -r`
   over `for x in $(fn)`.
 - New harness cases for every correctness item above, the exit codes, the
   `status` line format, and the guard path with stubbed `modprobe` and
   `timeout`. The harness takes the script path as a required argument.
-- CI runs the harness, the style fixture, shellcheck, `dpkg-buildpackage`
+- CI runs the harness, the style checks, shellcheck, `dpkg-buildpackage`
   and `lintian`.
 
-## 6.2 (2026-09-02)
+## Pre-release history (never published)
+
+Internal builds under the working name resize-gpu-bars, on one reference
+machine. Kept for the record; nothing below was ever distributed.
+
+### 6.2 (2026-09-02)
 
 Packaging only; the script is unchanged (6.1).
 
@@ -135,7 +137,7 @@ Packaging only; the script is unchanged (6.1).
   four GPUs on a running machine. The unit is now only enabled; it runs at
   the next boot or on an explicit `systemctl start`, and postinst says so.
 
-## 6.1 (2026-09-02)
+### 6.1 (2026-09-02)
 
 - Phase 3 verification read the XGMI hive id from `xgmi_hive_info` as a
   file; it is a directory (`xgmi_hive_info/xgmi_hive_id`), so every read was
@@ -147,7 +149,7 @@ Packaging only; the script is unchanged (6.1).
 - Test harness: `phase3_verify` runs under errexit and pipefail with and
   without XGMI hives (58 checks).
 
-## 6.0 (2026-09-02)
+### 6.0 (2026-09-02)
 
 First packaged release. Everything 5.x had hard-coded is discovered at run
 time.
@@ -167,19 +169,19 @@ time.
   region entirely).
 - Instance lock; a manual run is refused while the boot-time service is
   working.
-- `--dry-run` and `--status`; optional `/etc/default/resize-gpu-bars` with
-  `MAX_SIZE_INDEX`, `EXCLUDE_BDFS`, `FORCE_PLAN`, `GPU_DRIVER`, timeouts.
+- `--dry-run` and `--status`; optional `/etc/default/resize-amdgpu-bars` with
+  `MAX_SIZE_INDEX`, `EXCLUDE_GPUS`, `FORCE_PLAN`, `GPU_DRIVER`, timeouts.
 - Offline test harness with a fake sysfs tree, stubbed `lspci`/`setpci`,
   and a rule that stands in for the kernel's re-enumeration (kernels that
   behave like 6.x, like an unpatched 7.0, and like a size-limited window).
-- `resize-gpu-bars-check`: one-line per-boot verdict appended to a matrix
+- `resize-amdgpu-bars-check`: one-line per-boot verdict appended to a matrix
   log.
 - Debian packaging: unit, blacklist, GRUB drop-in, default configuration,
   harness as `dh_auto_test`.
 - A GPU without a Resizable BAR capability is left alone and still gets
   its driver.
 
-## 5.1 (2026-09-02)
+### 5.1 (2026-09-02)
 
 - Refuse a manual run while the boot-time service is still working.
 - Tolerate a concurrent re-enumeration of the bus during verification.
@@ -190,7 +192,7 @@ time.
   traced to `pbus_size_mem()` in `drivers/pci/setup-bus.c`, a one-line fix
   was written and verified on upstream 7.0.12 and on the Ubuntu 7.0 build.
 
-## 5.0 (2026-08-31)
+### 5.0 (2026-08-31)
 
 Rewrite after 4.x produced an unkillable boot hang.
 
@@ -210,7 +212,7 @@ Rewrite after 4.x produced an unkillable boot hang.
   misdetected by `amdgpu` as an SR-IOV virtual function and the driver waits
   forever for a hypervisor mailbox, in uninterruptible sleep.
 
-## 4.0 and earlier (2026-08)
+### 4.0 and earlier (2026-08)
 
 Single-machine scripts for the Mac Pro 7,1 with four Vega II Duo dies
 hard-coded: write the control register with `setpci`, remove the two

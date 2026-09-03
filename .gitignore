@@ -1,5 +1,5 @@
 debian/.debhelper/
-debian/resize-gpu-bars/
+debian/resize-amdgpu-bars/
 debian/files
 debian/*.substvars
 debian/*.debhelper.log

@@ -1,9 +1,4 @@
 #!/bin/sh
-# autopkgtest: run the shell style fixture when the source tree ships it
-# (tests/style/run.sh); exit 77 (skipped) otherwise.
+# autopkgtest: the project's static style checks over the tool.
 set -eu
-if [ ! -x tests/style/run.sh ]; then
-	echo "tests/style/run.sh not present in this source tree; skipping" >&2
-	exit 77
-fi
-exec bash tests/style/run.sh resize_gpu_bars.sh resize-gpu-bars-check
+exec bash tests/style/check.sh resize-amdgpu-bars

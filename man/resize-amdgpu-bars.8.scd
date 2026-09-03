@@ -1,22 +1,22 @@
-resize-gpu-bars(8)
+resize-amdgpu-bars(8)
 
 # NAME
 
-resize-gpu-bars - Resizable BAR for AMD GPUs behind PCIe switches
+resize-amdgpu-bars - Resizable BAR for AMD GPUs behind PCIe switches
 
 # SYNOPSIS
 
-*resize-gpu-bars* [*resize*] [*--force*]++
-*resize-gpu-bars* *status*++
-*resize-gpu-bars* *check* [*-1*]++
-*resize-gpu-bars* *dry-run*++
-*resize-gpu-bars* *diagnose*++
-*resize-gpu-bars* *revert*++
-*resize-gpu-bars* *--version* | *--help*
+*resize-amdgpu-bars* [*resize*] [*--force*]++
+*resize-amdgpu-bars* *status*++
+*resize-amdgpu-bars* *check* [*-1*]++
+*resize-amdgpu-bars* *dry-run*++
+*resize-amdgpu-bars* *diagnose*++
+*resize-amdgpu-bars* *revert*++
+*resize-amdgpu-bars* *--version* | *--help*
 
 # DESCRIPTION
 
-*resize-gpu-bars* enlarges the CPU-visible VRAM aperture (BAR0) of every AMD
+*resize-amdgpu-bars* enlarges the CPU-visible VRAM aperture (BAR0) of every AMD
 GPU driven by *amdgpu* to the largest size the device advertises through its
 Resizable BAR capability, makes the kernel re-size the bridge windows above
 the GPU so that the larger BAR can actually be assigned, and then loads
@@ -32,7 +32,7 @@ Resizable BAR control register produces a large BAR, because the bridge
 windows above the device were sized by firmware for the small BAR and are not
 grown in place. See _HOW IT WORKS_.
 
-It is normally run once per boot by *resize-gpu-bars.service*, before any
+It is normally run once per boot by *resize-amdgpu-bars.service*, before any
 display manager and before *amdgpu* would otherwise autoload. It can also be
 run by hand, as root, to inspect the state of the machine or to redo the
 resize.
@@ -65,7 +65,7 @@ assumed.
 *check* [*-1*]
 	Print the one-line verdict for this boot, combining the service
 	journal with the live sysfs state, and append it to
-	_/var/log/resize-gpu-bars/kernel-matrix.log_ so that boots on different
+	_/var/log/resize-amdgpu-bars/kernel-matrix.log_ so that boots on different
 	kernels and cards can be compared. With *-1* the previous boot is
 	judged from its journal alone (live-only fields are marked as such)
 	and nothing is appended. Read-only apart from the log file. The fields
@@ -103,32 +103,6 @@ assumed.
 *--help*
 	Print the usage summary and exit.
 
-## Deprecated aliases
-
-The 6.x invocation style is accepted by 7.0 with a warning on standard error
-and will be removed in 8.0:
-
-*resize_gpu_bars.sh*, *resize_gpu_bars.sh --force*
-	*resize-gpu-bars resize*, *resize-gpu-bars resize --force*
-
-*resize_gpu_bars.sh --status*
-	*resize-gpu-bars status*
-
-*resize_gpu_bars.sh --diagnose-only*
-	*resize-gpu-bars diagnose*
-
-*resize_gpu_bars.sh --dry-run*
-	*resize-gpu-bars dry-run*
-
-*resize_gpu_bars.sh --revert*
-	*resize-gpu-bars revert*
-
-*resize-gpu-bars-check* [*-1*]
-	*resize-gpu-bars check* [*-1*]
-
-_/usr/sbin/resize_gpu_bars.sh_ is a symbolic link to *resize-gpu-bars* in 7.0
-and disappears in 8.0.
-
 # EXIT STATUS
 
 *0*
@@ -153,49 +127,49 @@ and disappears in 8.0.
 
 # CONFIGURATION FILE
 
-_/etc/default/resize-gpu-bars_ is sourced as shell syntax if it exists. Every
+_/etc/default/resize-amdgpu-bars_ is sourced as shell syntax if it exists. Every
 key is optional. It caps the target size (*MAX_SIZE_INDEX*), excludes GPUs by
-address (*EXCLUDE_BDFS*), forces a single plan (*FORCE_PLAN*) and sets the
+address (*EXCLUDE_GPUS*), forces a single plan (*FORCE_PLAN*) and sets the
 timeouts (*MODPROBE_TIMEOUT*, *PROBE_WAIT*, *RESCAN_WAIT*, *MAX_ROUNDS*). The
 file is validated when it is read; a bad value is reported and the tool exits
-with status 1 before touching anything. See *resize-gpu-bars.conf*(5) for the
+with status 1 before touching anything. See *resize-amdgpu-bars.conf*(5) for the
 keys, their defaults and their constraints.
 
 # FILES
 
-_/usr/sbin/resize-gpu-bars_
+_/usr/sbin/resize-amdgpu-bars_
 	The tool.
 
-_/usr/lib/systemd/system/resize-gpu-bars.service_
-	Runs *resize-gpu-bars resize --force* once per boot, before the
+_/usr/lib/systemd/system/resize-amdgpu-bars.service_
+	Runs *resize-amdgpu-bars resize --force* once per boot, before the
 	display manager. Enabled on package installation; never started by the
 	package.
 
-_/usr/lib/modprobe.d/resize-gpu-bars.conf_
+_/usr/lib/modprobe.d/resize-amdgpu-bars.conf_
 	*blacklist amdgpu*. Stops udev from autoloading the driver before the
 	service runs; an explicit *modprobe amdgpu* still works, which is how
 	the service loads it. Removed with the package. To change it, place a
 	file with the same name under _/etc/modprobe.d/_, which takes precedence,
 	and run *update-initramfs -u -k all*.
 
-_/etc/default/grub.d/resize-gpu-bars.cfg_
+_/etc/default/grub.d/resize-amdgpu-bars.cfg_
 	Adds *pci=realloc* to *GRUB_CMDLINE_LINUX_DEFAULT*. Without
 	*pci=realloc* the kernel will not re-size bridge windows on a rescan
 	and the tool refuses to run.
 
-_/etc/default/resize-gpu-bars_
-	Configuration, see *resize-gpu-bars.conf*(5).
+_/etc/default/resize-amdgpu-bars_
+	Configuration, see *resize-amdgpu-bars.conf*(5).
 
-_/run/resize-gpu-bars/_
+_/run/resize-amdgpu-bars/_
 	Per-boot state: the summary of the last run (_summary_), the size
 	index observed at first discovery for each GPU (the baseline), and the
 	list of memory BARs each GPU is expected to have. Cleared at reboot.
 
-_/run/lock/resize-gpu-bars.lock_
+_/run/lock/resize-amdgpu-bars.lock_
 	Instance lock. A second instance, including a manual run while the
 	service is working, exits with status 1.
 
-_/var/log/resize-gpu-bars/kernel-matrix.log_
+_/var/log/resize-amdgpu-bars/kernel-matrix.log_
 	One line per *check* run, appended.
 
 # ENVIRONMENT
@@ -205,13 +179,18 @@ _/var/log/resize-gpu-bars/kernel-matrix.log_
 	Colour is only ever used when standard error is a terminal; the
 	journal never receives escape sequences.
 
-*RESIZE_GPU_BARS_SYSFS*
+*RESIZE_AMDGPU_BARS_SYSFS*
 	Root of the sysfs tree to operate on, default _/sys_. For the offline
 	test harness only; do not set it on a real system.
 
-*RESIZE_GPU_BARS_STATE_DIR*
-	Per-boot state directory, default _/run/resize-gpu-bars_. For the test
+*RESIZE_AMDGPU_BARS_STATE_DIR*
+	Per-boot state directory, default _/run/resize-amdgpu-bars_. For the test
 	harness only.
+
+*RESIZE_AMDGPU_BARS_CHECK_LOG*
+	Matrix log that *check* appends to, default
+	_/var/log/resize-amdgpu-bars/kernel-matrix.log_. For the test harness
+	only.
 
 # HOW IT WORKS
 
@@ -387,7 +366,7 @@ the boot time and kernel release (wrapped here to fit the page):
 
 # SEE ALSO
 
-*resize-gpu-bars.conf*(5), *setpci*(8), *lspci*(8), *systemd.service*(5),
+*resize-amdgpu-bars.conf*(5), *setpci*(8), *lspci*(8), *systemd.service*(5),
 *journalctl*(1)
 
 The README shipped with the package tells the full story of the bridge-window
@@ -396,5 +375,5 @@ and non-GRUB bootloaders.
 
 # AUTHORS
 
-Nikolas Britton. MIT licence. Report bugs with the output of *resize-gpu-bars
-check -1* and *journalctl -u resize-gpu-bars -b* attached.
+Exabit, Inc. MIT licence. Report bugs with the output of *resize-amdgpu-bars
+check -1* and *journalctl -u resize-amdgpu-bars -b* attached.

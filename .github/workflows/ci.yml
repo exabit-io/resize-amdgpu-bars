@@ -1,8 +1,8 @@
-# CI for resize-gpu-bars (to-do 9.3): lint, offline harness, style fixture,
+# CI for resize-amdgpu-bars (to-do 9.3): lint, offline harness, style checks,
 # Debian package build with lintian, deb kept as a build artifact.
 #
 # Nothing here touches PCI: the harness runs against a fake sysfs tree
-# (RESIZE_GPU_BARS_SYSFS / SYSFS override) and the package build only
+# (RESIZE_AMDGPU_BARS_SYSFS / SYSFS override) and the package build only
 # installs files. Boot tests stay manual (CONTRIBUTING.md, 9.4).
 name: CI
 
@@ -21,23 +21,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends shellcheck
           shellcheck --version
-      - name: Script, check tool and harness
-        # Must be clean; to-do 7.7 fixes or documents every note.
+      - name: Script, harness, style checker and tools
+        # Must be clean; the formatting pass fixes or documents every note.
         run: >-
           shellcheck -S style
-          resize_gpu_bars.sh
-          resize-gpu-bars-check
-          tests/test_resize_gpu_bars.sh
-      - name: Tools and the vendored style fixture
-        # -x -P SCRIPTDIR: the fixture's "# shellcheck source=" directives
-        # resolve relative to the script (same flags as its upstream).
-        run: >-
-          shellcheck -x -P SCRIPTDIR -S style
+          resize-amdgpu-bars
+          tests/test_resize_amdgpu_bars.sh
+          tests/style/check.sh
           tools/experiment-resource0-resize.sh
-          tests/style/run.sh
-          tests/style/t02_style.sh
-          tests/style/lib.sh
-          tests/style/mask.sh
 
   harness:
     name: offline harness
@@ -45,23 +36,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Run the harness against the script
-        run: bash tests/test_resize_gpu_bars.sh ./resize_gpu_bars.sh
+        run: bash tests/test_resize_amdgpu_bars.sh ./resize-amdgpu-bars
 
   style:
-    name: bash style fixture
+    name: bash style checks
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Install shellcheck (the fixture runs it when present)
+      - name: Install shellcheck (the checker runs it when present)
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends shellcheck
-      - name: tests/style/run.sh resize_gpu_bars.sh
-        # Allowed to fail until the section 7 formatting pass lands
-        # (to-do 7.1-7.8: tabs, 80 columns, shellcheck -S style clean).
-        # Drop continue-on-error in that commit.
+      - name: tests/style/check.sh resize-amdgpu-bars
+        # Allowed to fail until the formatting pass lands (tabs, 80
+        # columns, shellcheck -S style clean). Drop continue-on-error in
+        # that commit.
         continue-on-error: true
-        run: tests/style/run.sh resize_gpu_bars.sh
+        run: tests/style/check.sh resize-amdgpu-bars
 
   package:
     name: dpkg-buildpackage + lintian
@@ -79,18 +70,18 @@ jobs:
       - name: Collect the build products
         run: |
           mkdir -p dist
-          mv ../resize-gpu-bars_*.deb ../resize-gpu-bars_*.buildinfo \
-             ../resize-gpu-bars_*.changes dist/
+          mv ../resize-amdgpu-bars_*.deb ../resize-amdgpu-bars_*.buildinfo \
+             ../resize-amdgpu-bars_*.changes dist/
           ls -l dist
       - name: lintian
         # Fails on any warning. Today that is no-manual-page (twice) and
         # script-with-language-extension; to-do 6.1 (man pages) and 5.1
-        # (the resize-gpu-bars binary name) remove them.
-        run: lintian -I --fail-on warning dist/resize-gpu-bars_*.deb
+        # (the resize-amdgpu-bars binary name) remove them.
+        run: lintian -I --fail-on warning dist/resize-amdgpu-bars_*.deb
       - name: Upload the deb
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: resize-gpu-bars-deb
+          name: resize-amdgpu-bars-deb
           path: dist/
           if-no-files-found: error

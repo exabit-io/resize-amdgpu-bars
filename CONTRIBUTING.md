@@ -1,6 +1,6 @@
 # Contributing
 
-resize-gpu-bars is a root tool that rewrites PCI configuration space and
+resize-amdgpu-bars is a root tool that rewrites PCI configuration space and
 re-enumerates buses on a running machine. The bar for a change is
 correspondingly high: every change runs through the offline harness, every
 behavioural change is boot-tested on real hardware before it is called
@@ -10,9 +10,9 @@ supported, and no card is listed as supported that has not been booted.
 
 | path | what |
 |---|---|
-| `resize-gpu-bars` | the tool, one bash script |
-| `tests/test_resize_gpu_bars.sh` | the offline harness |
-| `tests/style/` | the style fixture (`t02_style.sh`, `lib.sh`, the masker) |
+| `resize-amdgpu-bars` | the tool, one bash script |
+| `tests/test_resize_amdgpu_bars.sh` | the offline harness |
+| `tests/style/check.sh` | static style checks (shebang, tabs, 80 columns, eval, shellcheck) |
 | `man/*.scd` | scdoc sources for the manual pages |
 | `conf/default/` | the shipped `/etc/default` files |
 | `debian/` | packaging |
@@ -20,7 +20,7 @@ supported, and no card is listed as supported that has not been booted.
 ## Running the harness
 
 ```
-bash tests/test_resize_gpu_bars.sh ./resize-gpu-bars
+bash tests/test_resize_amdgpu_bars.sh ./resize-amdgpu-bars
 ```
 
 The script path is a required argument. The harness builds a fake sysfs
@@ -31,12 +31,12 @@ functions), stubs `lspci`, `setpci`, `modprobe` and `timeout`, and replaces
 the kernel's re-enumeration with a rule so that the negotiation can be
 exercised for kernels that behave like 6.x, like an unpatched 7.0, and like
 a size-limited window. It points the tool at the fake tree with
-`RESIZE_GPU_BARS_SYSFS` and `RESIZE_GPU_BARS_STATE_DIR`; nothing real is
+`RESIZE_AMDGPU_BARS_SYSFS` and `RESIZE_AMDGPU_BARS_STATE_DIR`; nothing real is
 touched, and it does not need root. Every check prints `ok` or `FAIL`; the
 exit status is the number of failures.
 
 A change to the tool's behaviour comes with a harness case that fails
-without the change and passes with it. The cases added for 7.0 (partial
+without the change and passes with it. The cases added for 1.0 (partial
 `apply_plan` failure, observed baseline, root-bus GPU via
 `resource0_resize`, decode restored, non-writable rescan, non-resizable GPU
 left bound, non-amdgpu card refused, configuration validation, trap
@@ -48,13 +48,14 @@ to follow.
 The project follows Dave Eddy's bash style guide, with two deliberate
 deviations: `#!/bin/bash` (Debian policy for packaged scripts) and the GNU
 tools `find -printf`, `numfmt` and `readlink -f` (the tool reads Linux sysfs
-and cannot run anywhere else). The style fixture under `tests/style/` is
-vendored from the guide's test suite with the shebang check adjusted for
-that decision, and runs as part of `dh_auto_test`:
+and cannot run anywhere else). `tests/style/check.sh` checks the
+mechanical part of the guide (shebang, tabs, 80 columns at tab stop 8,
+trailing whitespace, blank-line runs, `eval`, backticks) and runs
+shellcheck at `-S style`; it is part of `dh_auto_test`:
 
 ```
-bash tests/style/t02_style.sh resize-gpu-bars
-shellcheck -S style resize-gpu-bars tests/test_resize_gpu_bars.sh
+bash tests/style/check.sh resize-amdgpu-bars
+shellcheck -S style resize-amdgpu-bars tests/test_resize_amdgpu_bars.sh
 ```
 
 Both must be clean. A shellcheck note that is wrong for this code is
@@ -86,12 +87,12 @@ unit enabled, on the kernel being claimed. What to run once the machine is
 up and the unit reports finished:
 
 ```
-systemctl status resize-gpu-bars.service    # active (exited), status 0
-journalctl -u resize-gpu-bars -b            # the run, start to finish
+systemctl status resize-amdgpu-bars.service    # active (exited), status 0
+journalctl -u resize-amdgpu-bars -b            # the run, start to finish
 journalctl -k -b | grep -E "can't assign|Call Trace|BUG:|trn=2 ACK"
-sudo resize-gpu-bars check                  # the verdict line
-sudo resize-gpu-bars status
-sudo resize-gpu-bars diagnose
+sudo resize-amdgpu-bars check                  # the verdict line
+sudo resize-amdgpu-bars status
+sudo resize-amdgpu-bars diagnose
 rocminfo | grep -c gfx                      # with ROCm installed
 ```
 

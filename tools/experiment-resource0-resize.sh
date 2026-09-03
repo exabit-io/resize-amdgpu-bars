@@ -57,7 +57,7 @@
 #     evicts any console framebuffer driver on it.
 #   - If the kernel cannot restore the original size (it always tries: "old
 #     value restored"), the die is BAR-less; the script then refuses to
-#     re-bind and tells you so. Recovery is a reboot; the resize-gpu-bars
+#     re-bind and tells you so. Recovery is a reboot; the resize-amdgpu-bars
 #     unit handles the next boot.
 
 set -u
@@ -66,8 +66,8 @@ export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 
 prog=${0##*/}
 pci_devs=/sys/bus/pci/devices
-lock_file=/run/lock/resize-gpu-bars.lock
-state_dir=/run/resize-gpu-bars
+lock_file=/run/lock/resize-amdgpu-bars.lock
+state_dir=/run/resize-amdgpu-bars
 bdf_re='^[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$'
 
 index=15
@@ -169,7 +169,7 @@ bar0_index() {
 
 # expected_mem_bars BDF -- the memory BARs the die is known to have: BAR0,
 # every BAR with a resourceN_resize attribute, every BAR flagged memory in
-# the resource file, and what resize-gpu-bars saw earlier this boot
+# the resource file, and what resize-amdgpu-bars saw earlier this boot
 expected_mem_bars() {
 	local g=$1 i line flags set='0'
 	for i in 0 1 2 3 4 5; do
@@ -318,11 +318,11 @@ check_preconditions() {
 	blocked_if $(( $? != 0 )) \
 	    'pci=realloc is not on the kernel command line' \
 	    'pci=realloc is on the kernel command line'
-	if [[ $(systemctl is-active resize-gpu-bars.service 2> /dev/null) == \
+	if [[ $(systemctl is-active resize-amdgpu-bars.service 2> /dev/null) == \
 	    activating ]]; then
-		blocked_if 1 'resize-gpu-bars.service is still running'
+		blocked_if 1 'resize-amdgpu-bars.service is still running'
 	else
-		blocked_if 0 'resize-gpu-bars.service is not running'
+		blocked_if 0 'resize-amdgpu-bars.service is not running'
 	fi
 	blocked_if $(( orig_index < 0 )) \
 	    "$bdf has no assigned BAR0 right now" \
@@ -536,7 +536,7 @@ verdict() {
 run_experiment() {
 	local rc
 	exec 9> "$lock_file" || die "cannot open $lock_file"
-	flock -n 9 || die "another resize-gpu-bars instance holds $lock_file"
+	flock -n 9 || die "another resize-amdgpu-bars instance holds $lock_file"
 	mkdir -p "$evid" || die "cannot create $evid"
 	: > "$evid/writes.log"
 	snapshot 0-before

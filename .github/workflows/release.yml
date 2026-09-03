@@ -38,12 +38,12 @@ jobs:
       - name: Collect the build products
         run: |
           mkdir -p dist
-          mv ../resize-gpu-bars_*.deb ../resize-gpu-bars_*.buildinfo \
-             ../resize-gpu-bars_*.changes dist/
+          mv ../resize-amdgpu-bars_*.deb ../resize-amdgpu-bars_*.buildinfo \
+             ../resize-amdgpu-bars_*.changes dist/
           (cd dist && sha256sum -- * > SHA256SUMS)
           ls -l dist
       - name: lintian
-        run: lintian -I --fail-on warning dist/resize-gpu-bars_*.deb
+        run: lintian -I --fail-on warning dist/resize-amdgpu-bars_*.deb
       - name: Create the release if the tag has none, attach the files
         env:
           GH_TOKEN: ${{ github.token }}
@@ -56,7 +56,7 @@ jobs:
       - name: Keep the deb as a workflow artifact too
         uses: actions/upload-artifact@v4
         with:
-          name: resize-gpu-bars-deb
+          name: resize-amdgpu-bars-deb
           path: dist/
           if-no-files-found: error
 
@@ -86,10 +86,10 @@ jobs:
 #          GH_TOKEN: ${{ github.token }}
 #        run: |
 #          gh release download "$GITHUB_REF_NAME" --pattern '*.deb' \
-#            --dir pool/main/resize-gpu-bars
+#            --dir pool/main/resize-amdgpu-bars
 #      - name: Import the signing key
 #        # A dedicated apt signing key stored as a repository secret; its
-#        # public half is committed as keys/resize-gpu-bars.gpg.
+#        # public half is committed as keys/resize-amdgpu-bars.gpg.
 #        run: |
 #          printf '%s' "${{ secrets.APT_SIGNING_KEY }}" | gpg --batch --import
 #      - name: Index and sign (what publish.sh does)
@@ -100,8 +100,8 @@ jobs:
 #          gzip -9kf "$bin/Packages"
 #          xz -9kf "$bin/Packages"
 #          apt-ftparchive \
-#            -o APT::FTPArchive::Release::Origin="resize-gpu-bars" \
-#            -o APT::FTPArchive::Release::Label="resize-gpu-bars" \
+#            -o APT::FTPArchive::Release::Origin="resize-amdgpu-bars" \
+#            -o APT::FTPArchive::Release::Label="resize-amdgpu-bars" \
 #            -o APT::FTPArchive::Release::Suite="noble" \
 #            -o APT::FTPArchive::Release::Codename="noble" \
 #            -o APT::FTPArchive::Release::Architectures="amd64" \
@@ -114,7 +114,7 @@ jobs:
 #      - name: Publish
 #        # Commit pool/ and dists/ back to the apt-repo branch and serve it
 #        # with GitHub Pages, or rsync to the web host that serves
-#        # "deb [signed-by=/etc/apt/keyrings/resize-gpu-bars.gpg]
+#        # "deb [signed-by=/etc/apt/keyrings/resize-amdgpu-bars.gpg]
 #        #  https://HOST/apt noble main".
 #        run: echo "not automated: decide hosting first (9.3 follow-up)"
 #

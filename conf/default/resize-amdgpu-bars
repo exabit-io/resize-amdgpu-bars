@@ -1,6 +1,6 @@
-# /etc/default/resize-gpu-bars — optional overrides for resize-gpu-bars(8).
+# /etc/default/resize-amdgpu-bars — optional overrides for resize-amdgpu-bars(8).
 # Shell syntax; every line is optional. Defaults shown. See
-# resize-gpu-bars.conf(5).
+# resize-amdgpu-bars.conf(5).
 
 # Cap every GPU at this Resizable BAR size index: 2^(n+20) bytes,
 # 15 = 32 GiB, 14 = 16 GiB, 13 = 8 GiB, 12 = 4 GiB, 8 = 256 MiB.
@@ -9,7 +9,7 @@
 
 # GPUs (domain:bus:dev.fn) to leave completely alone: not resized, not
 # unbound, their subtree never removed. Their driver still loads normally.
-#EXCLUDE_BDFS="0000:0b:00.0"
+#EXCLUDE_GPUS="0000:0b:00.0"
 
 # Skip negotiation and use exactly one plan: all-max | baseline
 #FORCE_PLAN=

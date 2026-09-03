@@ -1,5 +1,5 @@
 #!/bin/bash
-# test_resize_gpu_bars.sh — offline tests for resize_gpu_bars.sh v6.
+# test_resize_amdgpu_bars.sh — offline tests for resize-amdgpu-bars v6.
 #
 # Builds a fake sysfs tree (two Vega II Duo cards on separate root ports, a
 # W5500X-like single GPU without a PLX chain, a 580X-like GPU without ReBAR,
@@ -9,17 +9,17 @@
 # exercised for kernels that behave like 6.x, like an unpatched 7.0, and
 # like a size-limited window. Nothing real is touched.
 #
-#   ./test_resize_gpu_bars.sh path/to/resize_gpu_bars.sh
+#   ./test_resize_amdgpu_bars.sh path/to/resize-amdgpu-bars
 set -uo pipefail
-SCRIPT=${1:?usage: $0 path/to/resize_gpu_bars.sh}
+SCRIPT=${1:?usage: $0 path/to/resize-amdgpu-bars}
 [[ -r $SCRIPT ]] || { echo "$0: cannot read $SCRIPT" >&2; exit 2; }
 T=$(mktemp -d "${TMPDIR:-/tmp}/rgb-test.XXXXXX"); trap 'rm -rf "$T"' EXIT
-export RESIZE_GPU_BARS_SYSFS=$T/sys RESIZE_GPU_BARS_STATE_DIR=$T/run RESIZE_GPU_BARS_CONFIG=/dev/null
-export RESIZE_GPU_BARS_ALIAS_FILE=$T/modules.alias
-SYSFS=$RESIZE_GPU_BARS_SYSFS
+export RESIZE_AMDGPU_BARS_SYSFS=$T/sys RESIZE_AMDGPU_BARS_STATE_DIR=$T/run RESIZE_AMDGPU_BARS_CONFIG=/dev/null
+export RESIZE_AMDGPU_BARS_ALIAS_FILE=$T/modules.alias
+SYSFS=$RESIZE_AMDGPU_BARS_SYSFS
 # The alias table amdgpu would export: Vega20 (66A3) and Polaris (67DF); the
 # Caicos line belongs to radeon and must be ignored.
-cat > "$RESIZE_GPU_BARS_ALIAS_FILE" <<'EOF_ALIAS'
+cat > "$RESIZE_AMDGPU_BARS_ALIAS_FILE" <<'EOF_ALIAS'
 alias pci:v00001002d000066A3sv*sd*bc*sc*i* amdgpu
 alias pci:v00001002d000067DFsv*sd*bc*sc*i* amdgpu
 alias pci:v00001002d00006779sv*sd*bc*sc*i* radeon
@@ -468,8 +468,8 @@ check_config "MODPROBE_TIMEOUT=0" 1 'MODPROBE_TIMEOUT=0'
 check_config "PROBE_WAIT=-5" 1 'PROBE_WAIT=-5'
 check_config "RESCAN_WAIT empty" 1 'RESCAN_WAIT='
 check_config "MAX_ROUNDS=8x" 1 'MAX_ROUNDS=8x'
-check_config "EXCLUDE_BDFS bad entry" 1 'EXCLUDE_BDFS="0000:0b:00.0 0b:00.0"'; assert_eq "EXCLUDE_BDFS message names the entry" "$(grep -c "EXCLUDE_BDFS entry '0b:00.0'" "$T/cfg.out")" 1
-check_config "EXCLUDE_BDFS two good entries" 0 'EXCLUDE_BDFS="0000:0b:00.0 0000:1e:00.0"'
+check_config "EXCLUDE_GPUS bad entry" 1 'EXCLUDE_GPUS="0000:0b:00.0 0b:00.0"'; assert_eq "EXCLUDE_GPUS message names the entry" "$(grep -c "EXCLUDE_GPUS entry '0b:00.0'" "$T/cfg.out")" 1
+check_config "EXCLUDE_GPUS two good entries" 0 'EXCLUDE_GPUS="0000:0b:00.0 0000:1e:00.0"'
 check_config "FORCE_PLAN=first-large" 1 'FORCE_PLAN=first-large'
 check_config "FORCE_PLAN=baseline ok" 0 'FORCE_PLAN=baseline'
 check_config "three faults" 1 'MAX_SIZE_INDEX=99' 'MAX_ROUNDS=0' 'FORCE_PLAN=x'; assert_eq "one line per fault" "$(wc -l < "$T/cfg.out")" 3
@@ -477,13 +477,13 @@ assert_eq "validation did not leak into the harness" "$MAX_SIZE_INDEX|$MAX_ROUND
 
 echo "config: cap and exclusion"
 reset_regs
-MAX_SIZE_INDEX=14; EXCLUDE_BDFS="0000:0e:00.0"
+MAX_SIZE_INDEX=14; EXCLUDE_GPUS="0000:0e:00.0"
 discover_gpus
 assert_eq "excluded GPU dropped" "${#GPUS[@]}" 7
 assert_eq "excluded GPU makes its root impure" "${GPU_ROOT[0000:0b:00.0]}" "0000:08:08.0"
 assert_eq "cap applied" "${GPU_MAX_INDEX[0000:0b:00.0]}" 14
 assert_eq "cap does not raise a small card" "${GPU_MAX_INDEX[0000:2b:00.0]}" 13
-MAX_SIZE_INDEX=""; EXCLUDE_BDFS=""
+MAX_SIZE_INDEX=""; EXCLUDE_GPUS=""
 
 echo "bind guard"
 discover_gpus; reset_regs
@@ -575,7 +575,7 @@ assert_eq "two hives: per-GPU hive id" "$(grep -c 'XGMI hive: 111' <<<"$out")" 2
 assert_eq "two hives: summary" "$(sed -n 's/.*XGMI hives (id x members): //p' <<<"$out")" "111x2 222x2 "
 for g in "${GPUS[@]}"; do rm -f "${DEVPATH[$g]}/driver"; done
 
-echo "command line: subcommands, deprecated flags, version, help, check"
+echo "command line: subcommands, version, help, check"
 LOCK_FILE=$T/lock
 preflight() { return 0; }             # root, tools and pci=realloc are not the harness's business
 run_main() {   # stdout in $T/main.out, log lines (stderr) in $T/main.err; rc returned
@@ -583,27 +583,26 @@ run_main() {   # stdout in $T/main.out, log lines (stderr) in $T/main.err; rc re
       log_warn() { echo "[WARN]  $*" >&2; }; log_err() { echo "[ERROR] $*" >&2; }
       main "$@" ) > "$T/main.out" 2> "$T/main.err"
 }
-run_main --version; assert_eq "--version" "$?:$(cat "$T/main.out")" "0:resize-gpu-bars 7.0"
+run_main --version; assert_eq "--version" "$?:$(cat "$T/main.out")" "0:resize-amdgpu-bars 1.0"
 run_main --help; assert_eq "--help rc" "$?" 0
-assert_eq "--help comes from usage()" "$(grep -c '^Usage: resize-gpu-bars' "$T/main.out")" 1
+assert_eq "--help comes from usage()" "$(grep -c '^Usage: resize-amdgpu-bars' "$T/main.out")" 1
 assert_eq "--help documents the three exit statuses" "$(grep -cE '^  [012]  ' "$T/main.out")" 3
 assert_eq "--help lists every subcommand" "$(grep -cE '^  (resize|status|check|dry-run|diagnose|revert) ' "$T/main.out")" 6
 run_main bogus; assert_eq "unknown argument exits 1" "$?" 1
+run_main --diagnose-only; assert_eq "pre-release flag spelling is not accepted" "$?" 1
 run_main status; rc=$?
 assert_eq "status rc" "$rc" 0
 assert_eq "status line format" "$(grep -cE '^gpus=8( [0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]:bar0=[^,]+,idx=-?[0-9]+,max=-?[0-9]+,drv=[^,]+,root=[^ ]+){8}( last: plan=.*)?$' "$T/main.out")" 1
 assert_eq "status: one line, nothing else on stdout" "$(wc -l < "$T/main.out")" 1
-run_main --status; assert_eq "--status still works" "$?:$(grep -c '^gpus=8' "$T/main.out")" "0:1"
-assert_eq "--status warns about deprecation" "$(grep -c "'--status' is deprecated" "$T/main.err")" 1
-run_main --diagnose-only; assert_eq "--diagnose-only still works" "$?:$(grep -c 'Diagnostics complete' "$T/main.err"):$(grep -c "'--diagnose-only' is deprecated.*use 'diagnose'" "$T/main.err")" "0:1:1"
-run_main diagnose; assert_eq "diagnose" "$?:$(grep -c 'Diagnostics complete' "$T/main.err"):$(grep -c deprecated "$T/main.err")" "0:1:0"
+run_main diagnose; assert_eq "diagnose" "$?:$(grep -c 'Diagnostics complete' "$T/main.err")" "0:1"
 assert_eq "diagnose shows the six groups" "$(grep -c '^\[INFO\]  Group ' "$T/main.err")" 6
 run_main dry-run; assert_eq "dry-run" "$?:$(grep -c 'Dry run complete' "$T/main.err")" "0:1"
-run_main --dry-run; assert_eq "--dry-run alias" "$?:$(grep -c deprecated "$T/main.err")" "0:1"
-CHECK_TOOL=$T/no-such-check-tool
-run_main check; assert_eq "check without the tool installed" "$?" 1
-CHECK_TOOL=$T/check; printf '#!/bin/bash\necho "check called with: $*"\n' > "$CHECK_TOOL"; chmod +x "$CHECK_TOOL"
-run_main check -1; assert_eq "check execs the check tool with its arguments" "$?:$(cat "$T/main.out")" "0:check called with: -1"
+journalctl() { :; }                   # no journal in the harness
+CHECK_LOG=$T/matrix.log
+run_main check -1; assert_eq "check -1: verdict line, live-only fields, nothing appended" "$?:$(grep -c 'verdict=OTHER - inspect.*windows=(live only).*kfd=(live only)' "$T/main.out"):$([[ -e $T/matrix.log ]] && echo yes || echo no)" "0:1:no"
+run_main check; assert_eq "check: live fields from sysfs, line appended" "$?:$(grep -cE 'verdict=OTHER - inspect  plan=\?  .*windows=[^ ]+=.*bar0=([^ ]+ ){8} +kfd=[0-9]+  xgmi_hives=[0-9]+' "$T/main.out"):$(grep -c '(appended to' "$T/main.out"):$(wc -l < "$T/matrix.log")" "0:1:1:1"
+run_main check -2; assert_eq "check rejects other arguments" "$?" 1
+unset -f journalctl
 
 echo "full runs through main: exit status 0 / 2 / 1, journal hygiene"
 unload_driver; reset_regs; clear_stale_overrides; RULE=6x; MODPROBE_RC=0
@@ -637,7 +636,6 @@ SETPCI_FAIL_AFTER=-1; GPU_DIRTY=(); GPU_DIRTY_FROM=(); unload_driver; reset_regs
 run_main resize --force; assert_eq "recovered: exit 0" "$?" 0
 run_main revert; rc=$?
 assert_eq "revert: exit 0, baseline plan, everything bound" "$rc:$(grep -c 'Plan achieved : baseline' "$T/main.err"):$(bound 0000:0b:00.0):$(bar0_bytes 0000:0b:00.0)" "0:1:amdgpu:$(( 256 << 20 ))"
-run_main --revert; assert_eq "--revert alias" "$?:$(grep -c deprecated "$T/main.err")" "0:1"
 unload_driver; reset_regs; clear_stale_overrides
 
 echo
