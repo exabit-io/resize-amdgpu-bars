@@ -20,6 +20,8 @@ are reconstructed from the script headers.
   it unmeasured is gone, as is a stale line about 6.x aliases.
 - `tools/experiment-resource0-resize.sh` no longer prints "No such file or
   directory" for an absent sysfs attribute.
+- README "Kernel compatibility" links the upstream report on linux-pci
+  (2026-09-03) in place of the placeholder.
 
 ## 1.1 (2026-09-03)
 

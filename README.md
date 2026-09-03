@@ -597,7 +597,8 @@ same way on 6.x and on a fixed 7.0, and it is not the tool's method behind
 a switch (see "Why the usual ways fail here"). Evidence for both the
 regression and the sysfs result is in the upstream report.
 
-Upstream thread: (link to be added once the report is on linux-pci).
+Upstream report and proposed fix, on linux-pci (2026-09-03):
+https://lore.kernel.org/linux-pci/20260903063124.9316-1-nbritton@exabit.io/
 
 ## Known issues
 
