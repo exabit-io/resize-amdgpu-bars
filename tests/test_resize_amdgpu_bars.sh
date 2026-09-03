@@ -597,10 +597,12 @@ assert_eq "status: one line, nothing else on stdout" "$(wc -l < "$T/main.out")" 
 run_main diagnose; assert_eq "diagnose" "$?:$(grep -c 'Diagnostics complete' "$T/main.err")" "0:1"
 assert_eq "diagnose shows the six groups" "$(grep -c '^\[INFO\]  Group ' "$T/main.err")" 6
 run_main dry-run; assert_eq "dry-run" "$?:$(grep -c 'Dry run complete' "$T/main.err")" "0:1"
-CHECK_TOOL=$T/no-such-check-tool
-run_main check; assert_eq "check without the tool installed" "$?" 1
-CHECK_TOOL=$T/check; printf '#!/bin/bash\necho "check called with: $*"\n' > "$CHECK_TOOL"; chmod +x "$CHECK_TOOL"
-run_main check -1; assert_eq "check execs the check tool with its arguments" "$?:$(cat "$T/main.out")" "0:check called with: -1"
+journalctl() { :; }                   # no journal in the harness
+CHECK_LOG=$T/matrix.log
+run_main check -1; assert_eq "check -1: verdict line, live-only fields, nothing appended" "$?:$(grep -c 'verdict=OTHER - inspect.*windows=(live only).*kfd=(live only)' "$T/main.out"):$([[ -e $T/matrix.log ]] && echo yes || echo no)" "0:1:no"
+run_main check; assert_eq "check: live fields from sysfs, line appended" "$?:$(grep -cE 'verdict=OTHER - inspect  plan=\?  .*windows=[^ ]+=.*bar0=([^ ]+ ){8} +kfd=[0-9]+  xgmi_hives=[0-9]+' "$T/main.out"):$(grep -c '(appended to' "$T/main.out"):$(wc -l < "$T/matrix.log")" "0:1:1:1"
+run_main check -2; assert_eq "check rejects other arguments" "$?" 1
+unset -f journalctl
 
 echo "full runs through main: exit status 0 / 2 / 1, journal hygiene"
 unload_driver; reset_regs; clear_stale_overrides; RULE=6x; MODPROBE_RC=0

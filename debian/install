@@ -1,4 +1,3 @@
-resize-amdgpu-bars-check usr/sbin
 conf/modprobe.d/resize-amdgpu-bars.conf usr/lib/modprobe.d
 conf/default/resize-amdgpu-bars etc/default
 conf/default/grub.d/resize-amdgpu-bars.cfg etc/default/grub.d

@@ -187,6 +187,11 @@ _/var/log/resize-amdgpu-bars/kernel-matrix.log_
 	Per-boot state directory, default _/run/resize-amdgpu-bars_. For the test
 	harness only.
 
+*RESIZE_AMDGPU_BARS_CHECK_LOG*
+	Matrix log that *check* appends to, default
+	_/var/log/resize-amdgpu-bars/kernel-matrix.log_. For the test harness
+	only.
+
 # HOW IT WORKS
 
 ## The problem
