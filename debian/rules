@@ -34,6 +34,10 @@ override_dh_auto_test:
 	# script pass the checks; then drop the "|| true".
 	bash tests/style/check.sh $(SCRIPT) || true
 
+# CHANGELOG.md is the upstream changelog (installed as changelog.gz).
+override_dh_installchangelogs:
+	dh_installchangelogs CHANGELOG.md
+
 override_dh_auto_install:
 	install -D -m 0755 $(SCRIPT) $(PKGDIR)/usr/sbin/resize-amdgpu-bars
 

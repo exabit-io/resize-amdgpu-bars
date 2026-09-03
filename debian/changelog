@@ -3,7 +3,7 @@ resize-amdgpu-bars (1.0) unstable; urgency=medium
   * Initial public release. Resizable BAR for AMD GPUs behind PCIe
     switches: programs the BAR size, re-enumerates only the all-GPU PCI
     subtrees on their own root bus so the kernel re-sizes the bridge windows,
-    and loads amdgpu once behind a bind guard. Upstream history of the
-    internal builds is in /usr/share/doc/resize-amdgpu-bars/CHANGELOG.md.
+    and loads amdgpu once behind a bind guard. The upstream changelog
+    (changelog.gz in the package documentation) records the internal builds.
 
  -- Exabit, Inc. <packages@exabit.io>  Thu, 03 Sep 2026 01:01:10 +0000
