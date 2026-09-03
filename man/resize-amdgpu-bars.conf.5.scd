@@ -19,7 +19,7 @@ file should contain nothing but assignments and comments.
 
 The file is validated when it is read. A value that is not an integer where
 an integer is expected, an integer outside its range, a malformed PCI
-address in *EXCLUDE_BDFS*, or a *FORCE_PLAN* outside the allowed set is
+address in *EXCLUDE_GPUS*, or a *FORCE_PLAN* outside the allowed set is
 reported on standard error and the tool exits with status 1 before touching
 any device. The service therefore fails loudly at boot rather than part-way
 through a resize.
@@ -43,7 +43,7 @@ tool.
 	BAR   256M 512M 1G   2G   4G   8G   16G   32G   64G   (MiB / GiB)
 	```
 
-*EXCLUDE_BDFS*="_bdf_ [_bdf_ ...]"
+*EXCLUDE_GPUS*="_address_ [_address_ ...]"
 	GPUs to leave completely alone, as space-separated PCI addresses in
 	the form _domain:bus:device.function_, for example
 	*"0000:0b:00.0 0000:0e:00.0"*. An excluded GPU is not resized and not
@@ -100,7 +100,7 @@ _/etc/systemd/system/resize-amdgpu-bars.service.d/_.
 # /etc/default/resize-amdgpu-bars
 # Cap at 16 GiB, leave the card in bay 2 alone, allow a slow driver.
 MAX_SIZE_INDEX=14
-EXCLUDE_BDFS="0000:1b:00.0 0000:1e:00.0"
+EXCLUDE_GPUS="0000:1b:00.0 0000:1e:00.0"
 MODPROBE_TIMEOUT=300
 ```
 

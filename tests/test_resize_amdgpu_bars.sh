@@ -468,8 +468,8 @@ check_config "MODPROBE_TIMEOUT=0" 1 'MODPROBE_TIMEOUT=0'
 check_config "PROBE_WAIT=-5" 1 'PROBE_WAIT=-5'
 check_config "RESCAN_WAIT empty" 1 'RESCAN_WAIT='
 check_config "MAX_ROUNDS=8x" 1 'MAX_ROUNDS=8x'
-check_config "EXCLUDE_BDFS bad entry" 1 'EXCLUDE_BDFS="0000:0b:00.0 0b:00.0"'; assert_eq "EXCLUDE_BDFS message names the entry" "$(grep -c "EXCLUDE_BDFS entry '0b:00.0'" "$T/cfg.out")" 1
-check_config "EXCLUDE_BDFS two good entries" 0 'EXCLUDE_BDFS="0000:0b:00.0 0000:1e:00.0"'
+check_config "EXCLUDE_GPUS bad entry" 1 'EXCLUDE_GPUS="0000:0b:00.0 0b:00.0"'; assert_eq "EXCLUDE_GPUS message names the entry" "$(grep -c "EXCLUDE_GPUS entry '0b:00.0'" "$T/cfg.out")" 1
+check_config "EXCLUDE_GPUS two good entries" 0 'EXCLUDE_GPUS="0000:0b:00.0 0000:1e:00.0"'
 check_config "FORCE_PLAN=first-large" 1 'FORCE_PLAN=first-large'
 check_config "FORCE_PLAN=baseline ok" 0 'FORCE_PLAN=baseline'
 check_config "three faults" 1 'MAX_SIZE_INDEX=99' 'MAX_ROUNDS=0' 'FORCE_PLAN=x'; assert_eq "one line per fault" "$(wc -l < "$T/cfg.out")" 3
@@ -477,13 +477,13 @@ assert_eq "validation did not leak into the harness" "$MAX_SIZE_INDEX|$MAX_ROUND
 
 echo "config: cap and exclusion"
 reset_regs
-MAX_SIZE_INDEX=14; EXCLUDE_BDFS="0000:0e:00.0"
+MAX_SIZE_INDEX=14; EXCLUDE_GPUS="0000:0e:00.0"
 discover_gpus
 assert_eq "excluded GPU dropped" "${#GPUS[@]}" 7
 assert_eq "excluded GPU makes its root impure" "${GPU_ROOT[0000:0b:00.0]}" "0000:08:08.0"
 assert_eq "cap applied" "${GPU_MAX_INDEX[0000:0b:00.0]}" 14
 assert_eq "cap does not raise a small card" "${GPU_MAX_INDEX[0000:2b:00.0]}" 13
-MAX_SIZE_INDEX=""; EXCLUDE_BDFS=""
+MAX_SIZE_INDEX=""; EXCLUDE_GPUS=""
 
 echo "bind guard"
 discover_gpus; reset_regs

@@ -379,7 +379,7 @@ full reference.
 | key | default | meaning |
 |---|---|---|
 | `MAX_SIZE_INDEX` | empty (device maximum) | cap every GPU at this size index; 2^(n+20) bytes, so 15 = 32 GiB, 14 = 16 GiB, 13 = 8 GiB, 8 = 256 MiB |
-| `EXCLUDE_BDFS` | empty | GPUs to leave completely alone, e.g. `"0000:0b:00.0 0000:0e:00.0"`; not resized, not unbound, subtree never removed |
+| `EXCLUDE_GPUS` | empty | GPUs to leave completely alone, e.g. `"0000:0b:00.0 0000:0e:00.0"`; not resized, not unbound, subtree never removed |
 | `FORCE_PLAN` | empty (negotiate) | `all-max` or `baseline`: try exactly one plan |
 | `MODPROBE_TIMEOUT` | 180 | seconds before `modprobe amdgpu` is killed |
 | `PROBE_WAIT` | 60 | seconds to wait for every unguarded GPU to bind and KFD to settle |
@@ -563,7 +563,7 @@ Upstream thread: (link to be added once the report is on linux-pci).
   re-enumeration root, or none, and the windows above that point cannot be
   re-sized. `diagnose` reports it as "subtree above ... has non-GPU
   devices".
-- Excluding one die of a dual-die module with `EXCLUDE_BDFS` also stops the
+- Excluding one die of a dual-die module with `EXCLUDE_GPUS` also stops the
   other die's shared windows from being re-sized, because the shared
   subtree is no longer removable.
 - A GPU that comes back on a different bus number after the rescan (another

@@ -96,7 +96,7 @@ ALIAS_FILE=${RESIZE_AMDGPU_BARS_ALIAS_FILE:-}
 
 # Defaults, overridable from CONFIG_FILE.
 MAX_SIZE_INDEX=""
-EXCLUDE_BDFS=""
+EXCLUDE_GPUS=""
 FORCE_PLAN=""
 MODPROBE_TIMEOUT=180
 PROBE_WAIT=60
@@ -145,8 +145,8 @@ validate_config() {
     for v in MODPROBE_TIMEOUT PROBE_WAIT RESCAN_WAIT MAX_ROUNDS; do
         [[ ${!v} =~ ^[1-9][0-9]*$ ]] || { log_err "$v='${!v}' in $CONFIG_FILE: must be a positive integer"; bad=1; }
     done
-    for b in $EXCLUDE_BDFS; do
-        [[ $b =~ ^[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$ ]] || { log_err "EXCLUDE_BDFS entry '$b' in $CONFIG_FILE: must be a PCI address like 0000:0b:00.0"; bad=1; }
+    for b in $EXCLUDE_GPUS; do
+        [[ $b =~ ^[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$ ]] || { log_err "EXCLUDE_GPUS entry '$b' in $CONFIG_FILE: must be a PCI address like 0000:0b:00.0"; bad=1; }
     done
     case $FORCE_PLAN in
         ""|all-max|baseline) ;;
@@ -496,7 +496,7 @@ discover_gpus() {
         if ! driver_claims "$bdf"; then
             log_info "  $bdf $(lspci -mm -s "$bdf" 2>/dev/null | awk -F'"' '{print $6}'): not an $DRIVER device, skipped"; continue
         fi
-        if [[ " $EXCLUDE_BDFS " == *" $bdf "* ]]; then
+        if [[ " $EXCLUDE_GPUS " == *" $bdf "* ]]; then
             log_info "  $bdf excluded by configuration"; continue
         fi
         GPUS+=("$bdf")
@@ -1191,7 +1191,7 @@ Options:
 Configuration file: /etc/default/resize-amdgpu-bars (shell syntax, all optional)
   MAX_SIZE_INDEX    cap every GPU at this size index (2^(n+20) bytes:
                     15 = 32GiB, 14 = 16GiB, 13 = 8GiB); empty = device maximum
-  EXCLUDE_BDFS      "0000:0b:00.0 ..." GPUs to leave completely alone
+  EXCLUDE_GPUS      "0000:0b:00.0 ..." GPUs to leave completely alone
   FORCE_PLAN        all-max | baseline: use exactly that plan, no negotiation
   MODPROBE_TIMEOUT  seconds modprobe may take (180)
   PROBE_WAIT        seconds to wait for every unguarded GPU to bind (60)

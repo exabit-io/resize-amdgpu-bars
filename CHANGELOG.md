@@ -36,7 +36,7 @@ edge cases found in the 6.2 audit. Scope is fixed: AMD GPUs driven by
   against the `amdgpu` module alias table, so a `radeon`-era card is
   reported and skipped.
 - `/etc/default/resize-amdgpu-bars` is validated when read: integers in range,
-  PCI address syntax for `EXCLUDE_BDFS`, `FORCE_PLAN` in the allowed set. A
+  PCI address syntax for `EXCLUDE_GPUS`, `FORCE_PLAN` in the allowed set. A
   bad value stops the run with a message and exit status 1.
 - An exit handler on EXIT, TERM and INT clears `driver_override`, restores
   memory decode on dirty GPUs, and logs what was left in what state when the
@@ -165,7 +165,7 @@ time.
 - Instance lock; a manual run is refused while the boot-time service is
   working.
 - `--dry-run` and `--status`; optional `/etc/default/resize-amdgpu-bars` with
-  `MAX_SIZE_INDEX`, `EXCLUDE_BDFS`, `FORCE_PLAN`, `GPU_DRIVER`, timeouts.
+  `MAX_SIZE_INDEX`, `EXCLUDE_GPUS`, `FORCE_PLAN`, `GPU_DRIVER`, timeouts.
 - Offline test harness with a fake sysfs tree, stubbed `lspci`/`setpci`,
   and a rule that stands in for the kernel's re-enumeration (kernels that
   behave like 6.x, like an unpatched 7.0, and like a size-limited window).

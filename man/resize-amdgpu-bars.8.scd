@@ -129,7 +129,7 @@ assumed.
 
 _/etc/default/resize-amdgpu-bars_ is sourced as shell syntax if it exists. Every
 key is optional. It caps the target size (*MAX_SIZE_INDEX*), excludes GPUs by
-address (*EXCLUDE_BDFS*), forces a single plan (*FORCE_PLAN*) and sets the
+address (*EXCLUDE_GPUS*), forces a single plan (*FORCE_PLAN*) and sets the
 timeouts (*MODPROBE_TIMEOUT*, *PROBE_WAIT*, *RESCAN_WAIT*, *MAX_ROUNDS*). The
 file is validated when it is read; a bad value is reported and the tool exits
 with status 1 before touching anything. See *resize-amdgpu-bars.conf*(5) for the
