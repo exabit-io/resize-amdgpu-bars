@@ -1,16 +1,16 @@
-resize-gpu-bars.conf(5)
+resize-amdgpu-bars.conf(5)
 
 # NAME
 
-resize-gpu-bars.conf - configuration file for resize-gpu-bars
+resize-amdgpu-bars.conf - configuration file for resize-amdgpu-bars
 
 # SYNOPSIS
 
-_/etc/default/resize-gpu-bars_
+_/etc/default/resize-amdgpu-bars_
 
 # DESCRIPTION
 
-*resize-gpu-bars*(8) reads _/etc/default/resize-gpu-bars_ at the start of
+*resize-amdgpu-bars*(8) reads _/etc/default/resize-amdgpu-bars_ at the start of
 every run, if the file exists. The file is sourced by the shell, so it uses
 shell assignment syntax: one _KEY=value_ per line, values with spaces in
 double quotes, *#* starts a comment. Every key is optional; an absent key
@@ -24,7 +24,7 @@ reported on standard error and the tool exits with status 1 before touching
 any device. The service therefore fails loudly at boot rather than part-way
 through a resize.
 
-Do not confuse this file with _/usr/lib/modprobe.d/resize-gpu-bars.conf_,
+Do not confuse this file with _/usr/lib/modprobe.d/resize-amdgpu-bars.conf_,
 which holds the *amdgpu* blacklist and is not a configuration file of the
 tool.
 
@@ -58,7 +58,7 @@ tool.
 	resizable GPU at its target size and, if that does not verify, gives
 	up and leaves the bind guard to deal with the losers. _baseline_ puts
 	every GPU at the size observed at first discovery in this boot, which
-	is what *resize-gpu-bars revert* does. Empty (the default) negotiates:
+	is what *resize-amdgpu-bars revert* does. Empty (the default) negotiates:
 	all-max first, then demote the losers round by round, then baseline.
 
 *MODPROBE_TIMEOUT*=_seconds_
@@ -92,12 +92,12 @@ of about ten seconds each, *MODPROBE_TIMEOUT* plus the 30-second kill grace,
 *PROBE_WAIT*, and a margin. Keep *MODPROBE_TIMEOUT* + *PROBE_WAIT* +
 *MAX_ROUNDS* x *RESCAN_WAIT* comfortably below *TimeoutStartSec*, or raise
 the latter with a drop-in under
-_/etc/systemd/system/resize-gpu-bars.service.d/_.
+_/etc/systemd/system/resize-amdgpu-bars.service.d/_.
 
 # EXAMPLE
 
 ```
-# /etc/default/resize-gpu-bars
+# /etc/default/resize-amdgpu-bars
 # Cap at 16 GiB, leave the card in bay 2 alone, allow a slow driver.
 MAX_SIZE_INDEX=14
 EXCLUDE_BDFS="0000:1b:00.0 0000:1e:00.0"
@@ -106,15 +106,15 @@ MODPROBE_TIMEOUT=300
 
 # FILES
 
-_/etc/default/resize-gpu-bars_
+_/etc/default/resize-amdgpu-bars_
 	This file. Shipped with every key commented out and its default
 	shown.
 
-_/run/resize-gpu-bars/_
+_/run/resize-amdgpu-bars/_
 	Where the baseline size index of each GPU is recorded for the current
 	boot; not a configuration file, but the reason *baseline* means what
 	it means.
 
 # SEE ALSO
 
-*resize-gpu-bars*(8), *systemd.unit*(5)
+*resize-amdgpu-bars*(8), *systemd.unit*(5)

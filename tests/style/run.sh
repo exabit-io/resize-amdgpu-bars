@@ -4,7 +4,7 @@
 # check passes. See VENDORED.md for where the fixture comes from and what
 # was changed.
 #
-#   tests/style/run.sh resize_gpu_bars.sh [FILE...]
+#   tests/style/run.sh resize-amdgpu-bars [FILE...]
 #   STYLE_SHEBANG='#!/usr/bin/env bash' tests/style/run.sh FILE...
 
 here=${BASH_SOURCE[0]%/*}

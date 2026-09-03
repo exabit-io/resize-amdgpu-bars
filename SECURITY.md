@@ -2,12 +2,12 @@
 
 ## What this tool is
 
-resize-gpu-bars runs as root, once per boot, from a systemd unit that
+resize-amdgpu-bars runs as root, once per boot, from a systemd unit that
 starts before the display manager. It rewrites PCI configuration space,
 removes and rescans PCI buses, and loads a kernel module. There is no
 network access, no listener, no setuid component and no interface exposed
 to unprivileged users; the only inputs it reads are sysfs, the output of
-`lspci` and `setpci`, and `/etc/default/resize-gpu-bars`.
+`lspci` and `setpci`, and `/etc/default/resize-amdgpu-bars`.
 
 ## What it writes
 
@@ -22,9 +22,9 @@ As root, and only on AMD GPUs that `amdgpu` claims:
   and `bind` of GPU functions and their sibling functions (HDMI audio);
   `resourceN_resize` of a GPU that sits directly on a root bus.
 - One kernel module load: `modprobe amdgpu`, under `timeout(1)`.
-- Its own files: `/run/resize-gpu-bars/` (per-boot state),
-  `/run/lock/resize-gpu-bars.lock`, and, from the `check` subcommand,
-  `/var/log/resize-gpu-bars/kernel-matrix.log`.
+- Its own files: `/run/resize-amdgpu-bars/` (per-boot state),
+  `/run/lock/resize-amdgpu-bars.lock`, and, from the `check` subcommand,
+  `/var/log/resize-amdgpu-bars/kernel-matrix.log`.
 
 ## What it never touches
 
@@ -50,7 +50,7 @@ off because loading `amdgpu` and writing sysfs are the job.
 
 ## Configuration file
 
-`/etc/default/resize-gpu-bars` is sourced as shell by a root process. It is
+`/etc/default/resize-amdgpu-bars` is sourced as shell by a root process. It is
 a root-owned file under `/etc` with the same trust as any other file there;
 the tool validates the values it uses but cannot make sourcing a file safe
 against a writer who already has root. Keep it root-owned and not
@@ -70,7 +70,7 @@ running the tool by hand.
 
 Report a vulnerability privately by email to security@exabit.io. Do not
 open a public issue for it.
-Include the version (`resize-gpu-bars --version`), the distribution and
+Include the version (`resize-amdgpu-bars --version`), the distribution and
 kernel, and what you observed; a `diagnose` output helps when the problem
 depends on the topology. You will get an acknowledgement, and a fix or an
 explanation before anything is published. Ordinary bugs go to the issue

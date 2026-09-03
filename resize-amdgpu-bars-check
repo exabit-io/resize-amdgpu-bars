@@ -1,23 +1,23 @@
 #!/bin/bash
-# resize-gpu-bars-check — one-line verdict for a resize-gpu-bars boot, appended
+# resize-amdgpu-bars-check — one-line verdict for a resize-amdgpu-bars boot, appended
 # to a matrix log so kernels and cards can be compared. Read-only.
 #
-#   resize-gpu-bars-check        this boot (journal + live sysfs)
-#   resize-gpu-bars-check -1     previous boot (journal only)
+#   resize-amdgpu-bars-check        this boot (journal + live sysfs)
+#   resize-amdgpu-bars-check -1     previous boot (journal only)
 #
-# Standalone for now; folds into "resize-gpu-bars check" in a later release.
-# Environment: LOG (matrix log path), RESIZE_GPU_BARS_SYSFS (test-only sysfs
+# Standalone for now; folds into "resize-amdgpu-bars check" in a later release.
+# Environment: LOG (matrix log path), RESIZE_AMDGPU_BARS_SYSFS (test-only sysfs
 # root).
 set -u
 export LC_ALL=C
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 B=${1:-0}
-LOG=${LOG:-/var/log/resize-gpu-bars/kernel-matrix.log}
-SYSFS=${RESIZE_GPU_BARS_SYSFS:-/sys}
-TOOL=/usr/sbin/resize-gpu-bars
+LOG=${LOG:-/var/log/resize-amdgpu-bars/kernel-matrix.log}
+SYSFS=${RESIZE_AMDGPU_BARS_SYSFS:-/sys}
+TOOL=/usr/sbin/resize-amdgpu-bars
 
-J() { journalctl -b "$B" -u resize-gpu-bars.service --no-pager -o cat 2>/dev/null; }
+J() { journalctl -b "$B" -u resize-amdgpu-bars.service --no-pager -o cat 2>/dev/null; }
 K() { journalctl -b "$B" -k --no-pager -o cat 2>/dev/null; }
 
 # Distinct XGMI hive ids from sysfs (one per hive, however many dies it has;

@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# resize-gpu-bars: Resizable BAR for AMD GPUs behind PCIe switches
+# resize-amdgpu-bars: Resizable BAR for AMD GPUs behind PCIe switches
 #
 # WHAT THIS DOES
 #   Finds every AMD GPU in the machine, enlarges its BAR0 (the CPU-visible
@@ -59,7 +59,7 @@
 #   compatibility section.
 #
 # SUBCOMMANDS, OPTIONS, CONFIGURATION, EXIT STATUS
-#   See usage() below (resize-gpu-bars --help) and the man page.
+#   See usage() below (resize-amdgpu-bars --help) and the man page.
 #
 # REQUIREMENTS
 #   root; kernel booted with pci=realloc; pciutils (lspci/setpci); util-linux
@@ -79,20 +79,20 @@ PATH=/usr/sbin:/usr/bin:/sbin:/bin
 
 VERSION="7.0"
 DRIVER=amdgpu                  # the only driver this tool knows (scope decision)
-LOCK_FILE=/run/lock/resize-gpu-bars.lock
-SERVICE_NAME=resize-gpu-bars.service
-CHECK_TOOL=/usr/sbin/resize-gpu-bars-check   # "check" subcommand, until it folds in
+LOCK_FILE=/run/lock/resize-amdgpu-bars.lock
+SERVICE_NAME=resize-amdgpu-bars.service
+CHECK_TOOL=/usr/sbin/resize-amdgpu-bars-check   # "check" subcommand, until it folds in
 
-# Test-only overrides (used by tests/test_resize_gpu_bars.sh, never in
-# production): RESIZE_GPU_BARS_SYSFS points at a fake sysfs tree,
-# RESIZE_GPU_BARS_STATE_DIR at a scratch runtime directory and
-# RESIZE_GPU_BARS_CONFIG at a configuration file other than the system one;
-# RESIZE_GPU_BARS_ALIAS_FILE replaces the driver's PCI alias table
+# Test-only overrides (used by tests/test_resize_amdgpu_bars.sh, never in
+# production): RESIZE_AMDGPU_BARS_SYSFS points at a fake sysfs tree,
+# RESIZE_AMDGPU_BARS_STATE_DIR at a scratch runtime directory and
+# RESIZE_AMDGPU_BARS_CONFIG at a configuration file other than the system one;
+# RESIZE_AMDGPU_BARS_ALIAS_FILE replaces the driver's PCI alias table
 # (modules.alias syntax, or one pattern per line).
-SYSFS=${RESIZE_GPU_BARS_SYSFS:-/sys}
-STATE_DIR=${RESIZE_GPU_BARS_STATE_DIR:-/run/resize-gpu-bars}
-CONFIG_FILE=${RESIZE_GPU_BARS_CONFIG:-/etc/default/resize-gpu-bars}
-ALIAS_FILE=${RESIZE_GPU_BARS_ALIAS_FILE:-}
+SYSFS=${RESIZE_AMDGPU_BARS_SYSFS:-/sys}
+STATE_DIR=${RESIZE_AMDGPU_BARS_STATE_DIR:-/run/resize-amdgpu-bars}
+CONFIG_FILE=${RESIZE_AMDGPU_BARS_CONFIG:-/etc/default/resize-amdgpu-bars}
+ALIAS_FILE=${RESIZE_AMDGPU_BARS_ALIAS_FILE:-}
 
 # Defaults, overridable from CONFIG_FILE.
 MAX_SIZE_INDEX=""
@@ -429,7 +429,7 @@ load_driver_aliases() {
     if [[ -n $ALIAS_FILE ]]; then
         src=$ALIAS_FILE
     elif modinfo -F alias "$DRIVER" >/dev/null 2>&1; then
-        src=$(mktemp -p "${TMPDIR:-/tmp}" "resize-gpu-bars.XXXXXX") || return 1
+        src=$(mktemp -p "${TMPDIR:-/tmp}" "resize-amdgpu-bars.XXXXXX") || return 1
         modinfo -F alias "$DRIVER" 2>/dev/null | sed 's/^/alias /; s/$/ '"$DRIVER"'/' > "$src"
         local tmp=$src
     else
@@ -1166,7 +1166,7 @@ print_status() {
 # ---------------------------------------------------------------------------
 usage() {
     cat <<EOF
-Usage: resize-gpu-bars [SUBCOMMAND] [OPTION]...
+Usage: resize-amdgpu-bars [SUBCOMMAND] [OPTION]...
 
 Resizable BAR for AMD GPUs behind PCIe switches. Programs every amdgpu
 GPU's BAR0 to the largest size it supports, re-enumerates only the PCI
@@ -1188,7 +1188,7 @@ Options:
   --version   print the version and exit
   --help      print this help and exit
 
-Configuration file: /etc/default/resize-gpu-bars (shell syntax, all optional)
+Configuration file: /etc/default/resize-amdgpu-bars (shell syntax, all optional)
   MAX_SIZE_INDEX    cap every GPU at this size index (2^(n+20) bytes:
                     15 = 32GiB, 14 = 16GiB, 13 = 8GiB); empty = device maximum
   EXCLUDE_BDFS      "0000:0b:00.0 ..." GPUs to leave completely alone
@@ -1224,7 +1224,7 @@ main() {
                 [[ -x $CHECK_TOOL ]] || { log_err "$CHECK_TOOL is not installed"; return 1; }
                 exec "$CHECK_TOOL" "$@" ;;
             --force) force=1 ;;
-            --version|-V) echo "resize-gpu-bars $VERSION"; return 0 ;;
+            --version|-V) echo "resize-amdgpu-bars $VERSION"; return 0 ;;
             --help|-h) usage; return 0 ;;
             *) log_err "Unknown argument '$arg' (try --help)"; return 1 ;;
         esac
@@ -1232,7 +1232,7 @@ main() {
     install_traps
     if [[ $cmd == status ]]; then print_status; RUN_COMPLETE=1; return 0; fi
 
-    log_info "resize-gpu-bars $VERSION: discovery, plan negotiation, bind guard, bounded driver load"
+    log_info "resize-amdgpu-bars $VERSION: discovery, plan negotiation, bind guard, bounded driver load"
     # One instance at a time; a manual run under the boot-time service would
     # re-enumerate the bus underneath it and make both reports wrong.
     mkdir -p "$(dirname "$LOCK_FILE")"

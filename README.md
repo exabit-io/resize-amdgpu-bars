@@ -1,8 +1,8 @@
-# resize-gpu-bars
+# resize-amdgpu-bars
 
 Resizable BAR for AMD GPUs behind PCIe switches.
 
-`resize-gpu-bars` enlarges the CPU-visible VRAM aperture (BAR0) of every AMD
+`resize-amdgpu-bars` enlarges the CPU-visible VRAM aperture (BAR0) of every AMD
 GPU handled by `amdgpu` to the largest size the card supports, on machines
 where the usual ways of doing that do not work: cards with an on-board PCIe
 switch (dual-die cards, MPX modules), cards in switched enclosures and
@@ -86,7 +86,7 @@ the kernel enumerates the subtree again.
 sanctioned interface and ends up in the same `pci_resize_resource()` as the
 driver. It can re-assign a BAR in place when the device sits directly on a
 root port with a single window above it, and that is exactly where
-`resize-gpu-bars` uses it (tier 3 below). It cannot conjure a larger shared
+`resize-amdgpu-bars` uses it (tier 3 below). It cannot conjure a larger shared
 window out of a chain of bridges that the firmware sized for something
 smaller, and it has not been measured on the Duo chain; the driver's resize,
 which uses the same function, fails there.
@@ -195,7 +195,7 @@ The package needs `bash`, `pciutils`, `kmod` and `systemd`, and uses
 `.deb` from the release page:
 
 ```
-sudo apt install ./resize-gpu-bars_7.0_all.deb
+sudo apt install ./resize-amdgpu-bars_7.0_all.deb
 ```
 
 or build it from source:
@@ -203,21 +203,21 @@ or build it from source:
 ```
 sudo apt install debhelper scdoc shellcheck
 dpkg-buildpackage -us -uc -b
-sudo apt install ../resize-gpu-bars_7.0_all.deb
+sudo apt install ../resize-amdgpu-bars_7.0_all.deb
 ```
 
 The package installs these files:
 
 | path | purpose |
 |---|---|
-| `/usr/sbin/resize-gpu-bars` | the tool |
-| `/usr/lib/systemd/system/resize-gpu-bars.service` | runs `resize-gpu-bars resize --force` early in boot; enabled on install, never started by the package |
-| `/usr/lib/modprobe.d/resize-gpu-bars.conf` | `blacklist amdgpu`, so udev does not load the driver before the resize; override from `/etc/modprobe.d` if needed |
-| `/etc/default/grub.d/resize-gpu-bars.cfg` | adds `pci=realloc` to the kernel command line |
-| `/etc/default/resize-gpu-bars` | configuration, every key optional |
-| `/usr/share/man/man8/resize-gpu-bars.8` | manual page for the tool |
-| `/usr/share/man/man5/resize-gpu-bars.conf.5` | manual page for the configuration file |
-| `/usr/share/resize-gpu-bars/tests/` | the offline test harness |
+| `/usr/sbin/resize-amdgpu-bars` | the tool |
+| `/usr/lib/systemd/system/resize-amdgpu-bars.service` | runs `resize-amdgpu-bars resize --force` early in boot; enabled on install, never started by the package |
+| `/usr/lib/modprobe.d/resize-amdgpu-bars.conf` | `blacklist amdgpu`, so udev does not load the driver before the resize; override from `/etc/modprobe.d` if needed |
+| `/etc/default/grub.d/resize-amdgpu-bars.cfg` | adds `pci=realloc` to the kernel command line |
+| `/etc/default/resize-amdgpu-bars` | configuration, every key optional |
+| `/usr/share/man/man8/resize-amdgpu-bars.8` | manual page for the tool |
+| `/usr/share/man/man5/resize-amdgpu-bars.conf.5` | manual page for the configuration file |
+| `/usr/share/resize-amdgpu-bars/tests/` | the offline test harness |
 
 Installation runs `update-initramfs -u -k all` (the blacklist has to reach
 every initramfs) and `update-grub`. **A reboot is required**: the blacklist
@@ -225,7 +225,7 @@ and `pci=realloc` take effect at boot, and the package never starts the
 service on a running system, because a start unbinds and re-initialises
 every AMD GPU and every process using one loses it. To apply without a
 reboot, and with that understanding, run `sudo systemctl start
-resize-gpu-bars.service` yourself.
+resize-amdgpu-bars.service` yourself.
 
 ## First boot
 
@@ -236,18 +236,18 @@ re-enumeration cycle of about ten seconds, the driver load, and up to a
 minute of waiting for the KFD topology to settle. Progress is written to the
 journal and the console line by line, so a boot that looks stalled can be
 checked from another terminal or over SSH with `journalctl -u
-resize-gpu-bars -b -f`. Do not start a second copy of the tool while the
+resize-amdgpu-bars -b -f`. Do not start a second copy of the tool while the
 service is running; it refuses anyway, because it would re-enumerate the
 bus underneath the first one.
 
 ## Verification
 
 ```
-sudo resize-gpu-bars check
+sudo resize-amdgpu-bars check
 ```
 
 prints one line for this boot and appends it to
-`/var/log/resize-gpu-bars/kernel-matrix.log`. The line to expect on a
+`/var/log/resize-amdgpu-bars/kernel-matrix.log`. The line to expect on a
 machine where everything worked is (wrapped here):
 
 ```
@@ -260,23 +260,23 @@ machine where everything worked is (wrapped here):
 matter. Then:
 
 ```
-journalctl -u resize-gpu-bars -b       # ends with "SUCCESS:" and exit 0
-sudo resize-gpu-bars status            # one line, bar0=... per GPU
+journalctl -u resize-amdgpu-bars -b       # ends with "SUCCESS:" and exit 0
+sudo resize-amdgpu-bars status            # one line, bar0=... per GPU
 rocminfo | grep -c gfx                 # with ROCm: one agent per die
 ```
 
 ## Subcommands
 
-One binary, `resize-gpu-bars`, with subcommands. Every subcommand needs
+One binary, `resize-amdgpu-bars`, with subcommands. Every subcommand needs
 root. `--help` prints the usage summary and `--version` the version. The
-manual page `resize-gpu-bars(8)` is the authoritative reference; this is the
+manual page `resize-amdgpu-bars(8)` is the authoritative reference; this is the
 tour.
 
 ### resize
 
 ```
-sudo resize-gpu-bars                 # asks "Proceed? (y/N)"
-sudo resize-gpu-bars resize --force  # no question; what the service runs
+sudo resize-amdgpu-bars                 # asks "Proceed? (y/N)"
+sudo resize-amdgpu-bars resize --force  # no question; what the service runs
 ```
 
 The default subcommand. Interactively it asks first, because every display
@@ -289,7 +289,7 @@ still running its own.
 ### status
 
 ```
-$ sudo resize-gpu-bars status
+$ sudo resize-amdgpu-bars status
 gpus=4 0000:0b:00.0:bar0=32GiB,idx=15,max=15,drv=amdgpu,root=0000:06:00.0 ...
   last: plan=all-max gpus=4 large=4 baseline=0 driverless=0 unassigned=0
   missing=0 kfd_nodes=5 kernel=7.0.0-30-generic
@@ -303,8 +303,8 @@ was one. Read-only; always exits 0.
 ### check
 
 ```
-sudo resize-gpu-bars check       # this boot: journal + live sysfs; appended
-sudo resize-gpu-bars check -1    # previous boot: journal only; not appended
+sudo resize-amdgpu-bars check       # this boot: journal + live sysfs; appended
+sudo resize-amdgpu-bars check -1    # previous boot: journal only; not appended
 ```
 
 The per-boot verdict line shown under "Verification". Use `-1` after a
@@ -314,7 +314,7 @@ fired; the live-only fields (`windows`, `bar0`, `kfd`) read `(live only)`.
 ### dry-run
 
 ```
-$ sudo resize-gpu-bars dry-run
+$ sudo resize-amdgpu-bars dry-run
 ...
 Plans that would be tried:
   all-max:   0000:0b:00.0=32 GiB  0000:0e:00.0=32 GiB
@@ -330,7 +330,7 @@ Discovery plus the plan list. Changes nothing.
 ### diagnose
 
 ```
-$ sudo resize-gpu-bars diagnose
+$ sudo resize-amdgpu-bars diagnose
 Kernel booted with pci=realloc
 amdgpu not loaded (blacklist active); clean single-init path.
 GPUs found: 4   re-enumeration groups: 2
@@ -361,7 +361,7 @@ and the first thing to attach to a bug report.
 ### revert
 
 ```
-sudo resize-gpu-bars revert
+sudo resize-amdgpu-bars revert
 ```
 
 Every resizable GPU back to its baseline size, re-enumerate, load the driver
@@ -371,9 +371,9 @@ re-enumerated (see "Kernel compatibility"); reboot instead.
 
 ## Configuration
 
-`/etc/default/resize-gpu-bars`, shell syntax, every key optional. The file is
+`/etc/default/resize-amdgpu-bars`, shell syntax, every key optional. The file is
 validated when it is read; a bad value stops the run with a message and exit
-status 1 before any device is touched. `resize-gpu-bars.conf(5)` has the
+status 1 before any device is touched. `resize-amdgpu-bars.conf(5)` has the
 full reference.
 
 | key | default | meaning |
@@ -443,8 +443,8 @@ BAR and the override is gone with the rest of the sysfs state.
 ### Reading the journal
 
 ```
-journalctl -u resize-gpu-bars -b          # this boot's run
-journalctl -u resize-gpu-bars -b -1       # previous boot
+journalctl -u resize-amdgpu-bars -b          # this boot's run
+journalctl -u resize-amdgpu-bars -b -1       # previous boot
 journalctl -k -b | grep -E "can't assign|bridge window|BAR 0"
 ```
 
@@ -463,15 +463,15 @@ no card with a Resizable BAR capability was found. `OTHER` is anything else,
 including a run that had not finished when `check` ran; run it again after
 the service reports finished. `TRACE/SRIOV NOISE` is appended when the
 kernel log has an Oops, a hung task or the mailbox messages, and always
-deserves a look. The remaining fields are described in `resize-gpu-bars(8)`.
+deserves a look. The remaining fields are described in `resize-amdgpu-bars(8)`.
 
 ### Other messages
 
 `Kernel NOT booted with pci=realloc`: the unit fails at once with this
 message until the parameter is on the command line. On GRUB, check that
-`/etc/default/grub.d/resize-gpu-bars.cfg` exists and run `update-grub`; on
+`/etc/default/grub.d/resize-amdgpu-bars.cfg` exists and run `update-grub`; on
 other bootloaders see the next section. `Another instance holds
-/run/lock/resize-gpu-bars.lock`: the service is still running; watch it
+/run/lock/resize-amdgpu-bars.lock`: the service is still running; watch it
 instead. `N AMD GPUs are present under different addresses`: a GPU came
 back on a different bus number after the rescan, which happens when
 something else re-enumerated the bus during the run; run `resize` again.
@@ -585,10 +585,10 @@ MIT. See `debian/copyright` for the full text.
 
 Open an issue with:
 
-- the output of `sudo resize-gpu-bars check -1` for the boot in question
+- the output of `sudo resize-amdgpu-bars check -1` for the boot in question
   (or `check` if it is the current boot),
-- `journalctl -u resize-gpu-bars -b` (or `-b -1`) for that boot,
-- `sudo resize-gpu-bars diagnose`,
+- `journalctl -u resize-amdgpu-bars -b` (or `-b -1`) for that boot,
+- `sudo resize-amdgpu-bars diagnose`,
 - for a guard or hang report, `journalctl -k -b | grep -E "can't assign|
   bridge window|BAR|amdgpu"`,
 - the kernel (`uname -r`), the distribution, the bootloader, and the cards.

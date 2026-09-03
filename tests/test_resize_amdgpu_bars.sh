@@ -1,5 +1,5 @@
 #!/bin/bash
-# test_resize_gpu_bars.sh — offline tests for resize_gpu_bars.sh v6.
+# test_resize_amdgpu_bars.sh — offline tests for resize-amdgpu-bars v6.
 #
 # Builds a fake sysfs tree (two Vega II Duo cards on separate root ports, a
 # W5500X-like single GPU without a PLX chain, a 580X-like GPU without ReBAR,
@@ -9,17 +9,17 @@
 # exercised for kernels that behave like 6.x, like an unpatched 7.0, and
 # like a size-limited window. Nothing real is touched.
 #
-#   ./test_resize_gpu_bars.sh path/to/resize_gpu_bars.sh
+#   ./test_resize_amdgpu_bars.sh path/to/resize-amdgpu-bars
 set -uo pipefail
-SCRIPT=${1:?usage: $0 path/to/resize_gpu_bars.sh}
+SCRIPT=${1:?usage: $0 path/to/resize-amdgpu-bars}
 [[ -r $SCRIPT ]] || { echo "$0: cannot read $SCRIPT" >&2; exit 2; }
 T=$(mktemp -d "${TMPDIR:-/tmp}/rgb-test.XXXXXX"); trap 'rm -rf "$T"' EXIT
-export RESIZE_GPU_BARS_SYSFS=$T/sys RESIZE_GPU_BARS_STATE_DIR=$T/run RESIZE_GPU_BARS_CONFIG=/dev/null
-export RESIZE_GPU_BARS_ALIAS_FILE=$T/modules.alias
-SYSFS=$RESIZE_GPU_BARS_SYSFS
+export RESIZE_AMDGPU_BARS_SYSFS=$T/sys RESIZE_AMDGPU_BARS_STATE_DIR=$T/run RESIZE_AMDGPU_BARS_CONFIG=/dev/null
+export RESIZE_AMDGPU_BARS_ALIAS_FILE=$T/modules.alias
+SYSFS=$RESIZE_AMDGPU_BARS_SYSFS
 # The alias table amdgpu would export: Vega20 (66A3) and Polaris (67DF); the
 # Caicos line belongs to radeon and must be ignored.
-cat > "$RESIZE_GPU_BARS_ALIAS_FILE" <<'EOF_ALIAS'
+cat > "$RESIZE_AMDGPU_BARS_ALIAS_FILE" <<'EOF_ALIAS'
 alias pci:v00001002d000066A3sv*sd*bc*sc*i* amdgpu
 alias pci:v00001002d000067DFsv*sd*bc*sc*i* amdgpu
 alias pci:v00001002d00006779sv*sd*bc*sc*i* radeon
@@ -583,9 +583,9 @@ run_main() {   # stdout in $T/main.out, log lines (stderr) in $T/main.err; rc re
       log_warn() { echo "[WARN]  $*" >&2; }; log_err() { echo "[ERROR] $*" >&2; }
       main "$@" ) > "$T/main.out" 2> "$T/main.err"
 }
-run_main --version; assert_eq "--version" "$?:$(cat "$T/main.out")" "0:resize-gpu-bars 7.0"
+run_main --version; assert_eq "--version" "$?:$(cat "$T/main.out")" "0:resize-amdgpu-bars 7.0"
 run_main --help; assert_eq "--help rc" "$?" 0
-assert_eq "--help comes from usage()" "$(grep -c '^Usage: resize-gpu-bars' "$T/main.out")" 1
+assert_eq "--help comes from usage()" "$(grep -c '^Usage: resize-amdgpu-bars' "$T/main.out")" 1
 assert_eq "--help documents the three exit statuses" "$(grep -cE '^  [012]  ' "$T/main.out")" 3
 assert_eq "--help lists every subcommand" "$(grep -cE '^  (resize|status|check|dry-run|diagnose|revert) ' "$T/main.out")" 6
 run_main bogus; assert_eq "unknown argument exits 1" "$?" 1

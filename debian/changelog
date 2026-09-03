@@ -1,4 +1,4 @@
-resize-gpu-bars (7.0) unstable; urgency=medium
+resize-amdgpu-bars (7.0) unstable; urgency=medium
 
   * Changelog distribution is "unstable" from this entry on: the package is
     published from one public repository for every Debian derivative with
@@ -6,13 +6,13 @@ resize-gpu-bars (7.0) unstable; urgency=medium
     distribution field would only mislabel identical builds.
   * Packaging changes only in this entry; the 7.0 script, harness and
     documentation changes are recorded separately.
-  * Layout: the tool installs as /usr/sbin/resize-gpu-bars with a
-    resize_gpu_bars.sh compatibility symlink for this release (removed in
-    8.0, see NEWS); the harness lives in /usr/share/resize-gpu-bars/tests;
+  * Layout: the tool installs as /usr/sbin/resize-amdgpu-bars with a
+    resize-amdgpu-bars compatibility symlink for this release (removed in
+    8.0, see NEWS); the harness lives in /usr/share/resize-amdgpu-bars/tests;
     man pages are generated from man/*.scd with scdoc at build time.
   * The amdgpu blacklist moves from the conffile
     /etc/modprobe.d/amdgpu-blacklist.conf to
-    /usr/lib/modprobe.d/resize-gpu-bars.conf so it is removed with the
+    /usr/lib/modprobe.d/resize-amdgpu-bars.conf so it is removed with the
     package (a removed box no longer boots without a GPU driver); the old
     conffile is dropped on upgrade via dpkg-maintscript-helper. Comment
     scrubbed of machine-specific lore.
@@ -20,10 +20,10 @@ resize-gpu-bars (7.0) unstable; urgency=medium
     kernel's initrd carries the blacklist, not only the newest one; errors
     are reported (postrm never fails the removal). postinst still never
     starts the unit and still says when a reboot is required.
-  * Unit: ExecStart calls "resize-gpu-bars resize --force";
+  * Unit: ExecStart calls "resize-amdgpu-bars resize --force";
     SuccessExitStatus=2 (degraded: bind guard holding) so boot is not marked
     failed; "ExecStartPre=udevadm settle" dropped (it timed out every boot
-    and looked like a stall); Documentation=man:resize-gpu-bars(8);
+    and looked like a stall); Documentation=man:resize-amdgpu-bars(8);
     ConditionPathExists dropped; hardening added (UMask, PrivateNetwork,
     RestrictNamespaces, RestrictRealtime, RestrictSUIDSGID,
     LockPersonality, SystemCallArchitectures, ProtectClock, ProtectHostname,
@@ -39,15 +39,15 @@ resize-gpu-bars (7.0) unstable; urgency=medium
   * autopkgtest (debian/tests/control): the offline harness against the
     installed binary, and the shell style fixture when the tree ships it.
   * debian/copyright carries the full MIT licence text.
-  * resize-gpu-bars-check: counts distinct XGMI hive ids from sysfs
+  * resize-amdgpu-bars-check: counts distinct XGMI hive ids from sysfs
     (xgmi_hives=) instead of "XGMI: Add node" journal lines, which
     double-count on a driver reload; drops the legacy "all-large" verdict;
-    no longer parses ls; calls "resize-gpu-bars status".
-  * /etc/default/resize-gpu-bars: GiB/MiB units, GPU_DRIVER knob removed.
+    no longer parses ls; calls "resize-amdgpu-bars status".
+  * /etc/default/resize-amdgpu-bars: GiB/MiB units, GPU_DRIVER knob removed.
 
  -- Nikolas Britton <nikolas.britton@gmail.com>  Wed, 02 Sep 2026 21:57:04 +0000
 
-resize-gpu-bars (6.2) noble; urgency=medium
+resize-amdgpu-bars (6.2) noble; urgency=medium
 
   * Packaging only (script unchanged, v6.1): dh_installsystemd --no-start.
     The 6.0 -> 6.1 upgrade started the unit because it was in the failed

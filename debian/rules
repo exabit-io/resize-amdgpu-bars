@@ -1,9 +1,6 @@
 #!/usr/bin/make -f
-# Until the upstream rename lands the script may still be called
-# resize_gpu_bars.sh in the source tree; either way it is installed as
-# usr/sbin/resize-gpu-bars (the 7.0 layout).
-SCRIPT := $(firstword $(wildcard resize-gpu-bars resize_gpu_bars.sh))
-PKGDIR := debian/resize-gpu-bars
+SCRIPT := resize-amdgpu-bars
+PKGDIR := debian/resize-amdgpu-bars
 # Man pages are generated from scdoc sources in man/; tolerate their absence.
 MANSRC := $(wildcard man/*.scd)
 MANPAGES := $(MANSRC:.scd=)
@@ -15,7 +12,6 @@ MANPAGES := $(MANSRC:.scd=)
 # inside package 6.2). Epoch and Debian revision are stripped first.
 .PHONY: check-version
 check-version:
-	@test -n "$(SCRIPT)" || { echo "debian/rules: no resize-gpu-bars script in the source tree" >&2; exit 1; }
 	@sv=$$(grep -m1 -E '^(readonly |declare -r )?VERSION=' $(SCRIPT) | sed -E "s/^(readonly |declare -r )?VERSION=['\"]?([^'\" ]*)['\"]?.*/\2/"); \
 	 cv=$$(dpkg-parsechangelog -SVersion | sed -E 's/^[0-9]+://; s/-[^-]*$$//'); \
 	 if [ "$$sv" != "$$cv" ]; then \
@@ -33,13 +29,13 @@ override_dh_auto_clean:
 	rm -f $(MANPAGES)
 
 override_dh_auto_test:
-	bash tests/test_resize_gpu_bars.sh ./$(SCRIPT)
+	bash tests/test_resize_amdgpu_bars.sh ./$(SCRIPT)
 	# Advisory until the 7.0 formatting pass (to-do 7.1-7.7) makes the
 	# script pass the fixture; then drop the "|| true".
-	[ ! -x tests/style/run.sh ] || bash tests/style/run.sh $(SCRIPT) resize-gpu-bars-check || true
+	[ ! -x tests/style/run.sh ] || bash tests/style/run.sh $(SCRIPT) resize-amdgpu-bars-check || true
 
 override_dh_auto_install:
-	install -D -m 0755 $(SCRIPT) $(PKGDIR)/usr/sbin/resize-gpu-bars
+	install -D -m 0755 $(SCRIPT) $(PKGDIR)/usr/sbin/resize-amdgpu-bars
 
 override_dh_installsystemd:
 	# Never start the unit from the package: starting it unbinds and

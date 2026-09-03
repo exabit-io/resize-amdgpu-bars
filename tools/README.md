@@ -64,7 +64,7 @@ the re-bind did not complete (read the verdict, do not modprobe).
 
 What it does with `--i-understand`, on the named die and nothing else:
 
-1. Takes the `/run/lock/resize-gpu-bars.lock` flock so the unit cannot run
+1. Takes the `/run/lock/resize-amdgpu-bars.lock` flock so the unit cannot run
    underneath it.
 2. Snapshot `0-before`: `lspci -vv` of the die's functions and every bridge
    above it, their `resource` files, the bridge window lines, the ReBAR
@@ -94,7 +94,7 @@ another device.
 
 ### Preconditions it checks (all before anything is written)
 
-- root; `pci=realloc` on the command line; `resize-gpu-bars.service` not
+- root; `pci=realloc` on the command line; `resize-amdgpu-bars.service` not
   `activating`; the die is an AMD display-class device with a
   `resource0_resize` attribute and an assigned BAR0.
 - The requested index is in the supported mask and differs from the
@@ -120,7 +120,7 @@ re-bind:
 ```
 # one-shot: keep amdgpu out and the unit off for this boot only
 # (GRUB: press e, append to the linux line)
-    modprobe.blacklist=amdgpu systemd.mask=resize-gpu-bars.service
+    modprobe.blacklist=amdgpu systemd.mask=resize-amdgpu-bars.service
 ```
 
 then as root:
@@ -142,7 +142,7 @@ that did get its BAR (`0b:00.0`), also from a no-die-bound boot: with the
 sibling `0e:00.0` BAR-less the "no unassigned BAR anywhere" check refuses;
 that is deliberate. So on an unfixed kernel the experiment must start from
 the firmware layout: boot vanilla with `modprobe.blacklist=amdgpu
-systemd.mask=resize-gpu-bars.service` (all four dies at 256 MiB, windows
+systemd.mask=resize-amdgpu-bars.service` (all four dies at 256 MiB, windows
 as firmware left them) and write `--index 15` to one die. The verdict then
 shows whether the in-place path can grow a single die to 32 GiB inside the
 firmware's 770 MiB parent window (it cannot: the chain must grow, and

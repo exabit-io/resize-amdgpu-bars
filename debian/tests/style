@@ -6,4 +6,4 @@ if [ ! -x tests/style/run.sh ]; then
 	echo "tests/style/run.sh not present in this source tree; skipping" >&2
 	exit 77
 fi
-exec bash tests/style/run.sh resize_gpu_bars.sh resize-gpu-bars-check
+exec bash tests/style/run.sh resize-amdgpu-bars resize-amdgpu-bars-check

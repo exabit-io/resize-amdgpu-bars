@@ -1,5 +1,5 @@
-resize-gpu-bars-check usr/sbin
-conf/modprobe.d/resize-gpu-bars.conf usr/lib/modprobe.d
-conf/default/resize-gpu-bars etc/default
-conf/default/grub.d/resize-gpu-bars.cfg etc/default/grub.d
-tests/test_resize_gpu_bars.sh usr/share/resize-gpu-bars/tests
+resize-amdgpu-bars-check usr/sbin
+conf/modprobe.d/resize-amdgpu-bars.conf usr/lib/modprobe.d
+conf/default/resize-amdgpu-bars etc/default
+conf/default/grub.d/resize-amdgpu-bars.cfg etc/default/grub.d
+tests/test_resize_amdgpu_bars.sh usr/share/resize-amdgpu-bars/tests

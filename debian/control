@@ -1,15 +1,15 @@
-Source: resize-gpu-bars
+Source: resize-amdgpu-bars
 Section: admin
 Priority: optional
 Maintainer: Exabit, Inc. <packages@exabit.io>
 Build-Depends: debhelper-compat (= 13), scdoc
 Standards-Version: 4.6.2
 Rules-Requires-Root: no
-Homepage: https://github.com/nbritton/resize-gpu-bars
-Vcs-Git: https://github.com/nbritton/resize-gpu-bars.git
-Vcs-Browser: https://github.com/nbritton/resize-gpu-bars
+Homepage: https://github.com/exabit-io/resize-amdgpu-bars
+Vcs-Git: https://github.com/exabit-io/resize-amdgpu-bars.git
+Vcs-Browser: https://github.com/exabit-io/resize-amdgpu-bars
 
-Package: resize-gpu-bars
+Package: resize-amdgpu-bars
 Architecture: all
 Depends: ${misc:Depends}, bash (>= 5), pciutils, kmod, systemd
 Recommends: initramfs-tools, grub2-common

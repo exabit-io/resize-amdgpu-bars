@@ -46,8 +46,8 @@ Every change is marked `LOCAL:` in the file; `local-changes.patch` is the
 
 ## Running
 
-    tests/style/run.sh resize_gpu_bars.sh
-    tests/style/run.sh resize_gpu_bars.sh tests/test_resize_gpu_bars.sh
+    tests/style/run.sh resize-amdgpu-bars
+    tests/style/run.sh resize-amdgpu-bars tests/test_resize_amdgpu_bars.sh
 
 Output is TAP-like (`ok N - ...` / `not ok N - ...`, failing line numbers in
 `#` comments, a final `# pass=X fail=Y` line); the exit status is 0 only
