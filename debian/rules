@@ -30,7 +30,7 @@ override_dh_auto_clean:
 
 override_dh_auto_test:
 	bash tests/test_resize_amdgpu_bars.sh ./$(SCRIPT)
-	# Advisory until the 7.0 formatting pass (to-do 7.1-7.7) makes the
+	# Advisory until the formatting pass makes the
 	# script pass the fixture; then drop the "|| true".
 	[ ! -x tests/style/run.sh ] || bash tests/style/run.sh $(SCRIPT) || true
 

@@ -186,7 +186,7 @@ platform. Ubuntu ships GRUB, so the `/etc/default/grub.d` drop-in is the
 supported way `pci=realloc` gets onto the kernel command line. rEFInd and
 OpenCore are tier 2, best effort: documented below, not automated. Other
 Debian derivatives with GRUB are expected to work. Anything else is out of
-scope for 7.0.
+scope for 1.0.
 
 ## Install
 
@@ -195,7 +195,7 @@ The package needs `bash`, `pciutils`, `kmod` and `systemd`, and uses
 `.deb` from the release page:
 
 ```
-sudo apt install ./resize-amdgpu-bars_7.0_all.deb
+sudo apt install ./resize-amdgpu-bars_1.0_all.deb
 ```
 
 or build it from source:
@@ -203,7 +203,7 @@ or build it from source:
 ```
 sudo apt install debhelper scdoc shellcheck
 dpkg-buildpackage -us -uc -b
-sudo apt install ../resize-amdgpu-bars_7.0_all.deb
+sudo apt install ../resize-amdgpu-bars_1.0_all.deb
 ```
 
 The package installs these files:

@@ -36,7 +36,7 @@ touched, and it does not need root. Every check prints `ok` or `FAIL`; the
 exit status is the number of failures.
 
 A change to the tool's behaviour comes with a harness case that fails
-without the change and passes with it. The cases added for 7.0 (partial
+without the change and passes with it. The cases added for 1.0 (partial
 `apply_plan` failure, observed baseline, root-bus GPU via
 `resource0_resize`, decode restored, non-writable rescan, non-resizable GPU
 left bound, non-amdgpu card refused, configuration validation, trap

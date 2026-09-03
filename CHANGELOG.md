@@ -4,10 +4,10 @@ Upstream history of resize-amdgpu-bars. Versions before 6.0 were a single
 script maintained on the reference machine and never packaged; their entries
 are reconstructed from the script headers.
 
-## 7.0 (unreleased)
+## 1.0 (unreleased)
 
-First public release. Same method as 6.2 with a production finish and the
-edge cases found in the 6.2 audit. Scope is fixed: AMD GPUs driven by
+First public release, as resize-amdgpu-bars. Same method as the internal
+6.2 build with a production finish and the edge cases found in its audit. Scope is fixed: AMD GPUs driven by
 `amdgpu`, nothing else.
 
 ### Correctness and safety
@@ -123,7 +123,12 @@ edge cases found in the 6.2 audit. Scope is fixed: AMD GPUs driven by
 - CI runs the harness, the style fixture, shellcheck, `dpkg-buildpackage`
   and `lintian`.
 
-## 6.2 (2026-09-02)
+## Pre-release history (never published)
+
+Internal builds under the working name resize-gpu-bars, on one reference
+machine. Kept for the record; nothing below was ever distributed.
+
+### 6.2 (2026-09-02)
 
 Packaging only; the script is unchanged (6.1).
 
@@ -132,7 +137,7 @@ Packaging only; the script is unchanged (6.1).
   four GPUs on a running machine. The unit is now only enabled; it runs at
   the next boot or on an explicit `systemctl start`, and postinst says so.
 
-## 6.1 (2026-09-02)
+### 6.1 (2026-09-02)
 
 - Phase 3 verification read the XGMI hive id from `xgmi_hive_info` as a
   file; it is a directory (`xgmi_hive_info/xgmi_hive_id`), so every read was
@@ -144,7 +149,7 @@ Packaging only; the script is unchanged (6.1).
 - Test harness: `phase3_verify` runs under errexit and pipefail with and
   without XGMI hives (58 checks).
 
-## 6.0 (2026-09-02)
+### 6.0 (2026-09-02)
 
 First packaged release. Everything 5.x had hard-coded is discovered at run
 time.
@@ -176,7 +181,7 @@ time.
 - A GPU without a Resizable BAR capability is left alone and still gets
   its driver.
 
-## 5.1 (2026-09-02)
+### 5.1 (2026-09-02)
 
 - Refuse a manual run while the boot-time service is still working.
 - Tolerate a concurrent re-enumeration of the bus during verification.
@@ -187,7 +192,7 @@ time.
   traced to `pbus_size_mem()` in `drivers/pci/setup-bus.c`, a one-line fix
   was written and verified on upstream 7.0.12 and on the Ubuntu 7.0 build.
 
-## 5.0 (2026-08-31)
+### 5.0 (2026-08-31)
 
 Rewrite after 4.x produced an unkillable boot hang.
 
@@ -207,7 +212,7 @@ Rewrite after 4.x produced an unkillable boot hang.
   misdetected by `amdgpu` as an SR-IOV virtual function and the driver waits
   forever for a hypervisor mailbox, in uninterruptible sleep.
 
-## 4.0 and earlier (2026-08)
+### 4.0 and earlier (2026-08)
 
 Single-machine scripts for the Mac Pro 7,1 with four Vega II Duo dies
 hard-coded: write the control register with `setpci`, remove the two

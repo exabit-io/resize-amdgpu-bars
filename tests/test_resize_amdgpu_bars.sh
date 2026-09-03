@@ -583,7 +583,7 @@ run_main() {   # stdout in $T/main.out, log lines (stderr) in $T/main.err; rc re
       log_warn() { echo "[WARN]  $*" >&2; }; log_err() { echo "[ERROR] $*" >&2; }
       main "$@" ) > "$T/main.out" 2> "$T/main.err"
 }
-run_main --version; assert_eq "--version" "$?:$(cat "$T/main.out")" "0:resize-amdgpu-bars 7.0"
+run_main --version; assert_eq "--version" "$?:$(cat "$T/main.out")" "0:resize-amdgpu-bars 1.0"
 run_main --help; assert_eq "--help rc" "$?" 0
 assert_eq "--help comes from usage()" "$(grep -c '^Usage: resize-amdgpu-bars' "$T/main.out")" 1
 assert_eq "--help documents the three exit statuses" "$(grep -cE '^  [012]  ' "$T/main.out")" 3
