@@ -1,3 +1,17 @@
+resize-amdgpu-bars (1.1) unstable; urgency=medium
+
+  * Unit: enable SystemCallFilter=@system-service @module @raw-io with
+    SystemCallErrorNumber=EPERM (validated on real hardware).
+  * Read-only commands no longer write the runtime state directory.
+  * Reject a configuration that cannot finish inside the unit's
+    TimeoutStartSec; document the rule in resize-amdgpu-bars.conf(5).
+  * Journal cosmetics: "none" for empty BAR lists; ROCm tools named only
+    when installed.
+  * /var/log/resize-amdgpu-bars is package-owned and removed on purge.
+  * Style checks and shellcheck -S style enforced by the build.
+
+ -- Exabit Networks <packages@exabit.io>  Thu, 03 Sep 2026 02:55:00 +0000
+
 resize-amdgpu-bars (1.0) unstable; urgency=medium
 
   * Initial public release. Resizable BAR for AMD GPUs behind PCIe

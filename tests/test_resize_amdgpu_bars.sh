@@ -1067,7 +1067,9 @@ run_main() {
 	) > "$T/main.out" 2> "$T/main.err"
 }
 run_main --version
-assert_eq '--version' "$?:$(<"$T/main.out")" '0:resize-amdgpu-bars 1.0'
+rc=$?
+ver=$(sed -n "s/^VERSION='\(.*\)'$/\1/p" "$SCRIPT")
+assert_eq '--version' "$rc:$(<"$T/main.out")" "0:resize-amdgpu-bars $ver"
 run_main --help
 assert_eq '--help rc' "$?" 0
 assert_eq '--help comes from usage()' \

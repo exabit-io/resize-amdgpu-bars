@@ -4,7 +4,48 @@ Upstream history of resize-amdgpu-bars. Versions before 6.0 were a single
 script maintained on the reference machine and never packaged; their entries
 are reconstructed from the script headers.
 
-## 1.0 (unreleased)
+## 1.1 (unreleased)
+
+Hardening and the fixes from the 1.0 boot audit. No change to the resize
+method.
+
+### Unit
+
+- `SystemCallFilter=@system-service @module @raw-io` is enabled, with
+  `SystemCallErrorNumber=EPERM` so a syscall the filter misses fails the
+  command instead of killing the boot unit. Validated on the reference
+  machine in a transient unit carrying every other hardening line: the
+  harness, dry-run, diagnose, a real module load and unload and a real
+  setpci access. `systemd-analyze security` 4.0 -> 2.9.
+
+### Behaviour
+
+- `status`, `diagnose`, `dry-run` and `check` leave the runtime state
+  directory exactly as they found it; only `resize` and `revert` record
+  the memory BARs they see.
+- A configuration whose `MODPROBE_TIMEOUT` + 30 s kill grace + `PROBE_WAIT`
+  is not below the unit's `TimeoutStartSec` (480 s) is rejected with the
+  values and the budget named, instead of the unit being killed mid-run.
+  The rule is documented in resize-amdgpu-bars.conf(5).
+- Journal: empty BAR lists print `none`; the final line names rocminfo /
+  rocm-smi only when one of them is installed.
+
+### Packaging
+
+- `/var/log/resize-amdgpu-bars` is package-owned and removed on purge.
+- Release workflow runs on bare version tags (`1.1`) as well as `v1.1`.
+
+### Internals
+
+- Mutable globals are lowercase; per-group member and chain lists are
+  arrays reached by name reference; list-producing functions are consumed
+  with `while read -r`.
+- Formatting pass (tabs, 80 columns, no one-line blocks, single quotes for
+  literals, parameter expansion over basename/dirname/cat); the style
+  checks and `shellcheck -S style` are enforced by the build and CI.
+- Harness: 224 cases (was 205).
+
+## 1.0 (2026-09-03)
 
 First public release, as resize-amdgpu-bars. Same method as the internal
 6.2 build with a production finish and the edge cases found in its audit. Scope is fixed: AMD GPUs driven by
