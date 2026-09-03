@@ -198,6 +198,10 @@ declare -A GPU_DECODE_OFF=()     # "1" while we hold memory decode disabled arou
 declare -A OVERRIDE_SET=()       # functions whose driver_override this run wrote
 declare -A OVERRIDE_KEEP=()      # ... deliberately, to fence off a BAR-less GPU (left in place)
 TOUCHED=0                     # 1 once the run has started changing hardware state
+# Only a run that changes hardware (resize, revert) records the memory BARs
+# it sees in STATE_DIR; status, diagnose, dry-run and check read the record
+# but leave the directory exactly as they found it ("change nothing").
+RECORD_BARS=0
 RUN_COMPLETE=0                # 1 once the run reached its intended end
 CLEANUP_DONE=0
 
@@ -272,7 +276,8 @@ subtree_endpoints() {
 # against a list of BARs the device is known to have. That list is: BAR0
 # (every GPU has one), every BAR with a resourceN_resize attribute, and every
 # memory BAR seen with an address earlier in this boot (persisted in STATE_DIR
-# because firmware assigns everything at POST, before any re-enumeration).
+# by the resize run, because firmware assigns everything at POST, before any
+# re-enumeration; read-only commands only read that record).
 # ---------------------------------------------------------------------------
 gpu_mem_bars() {   # prints the expected memory BAR indices of a GPU, sorted
     local g=$1 i line flags set="0" f=$STATE_DIR/bars-$1
@@ -282,10 +287,11 @@ gpu_mem_bars() {   # prints the expected memory BAR indices of a GPU, sorted
         [[ -n $flags ]] && (( 16#${flags#0x} & 0x200 )) && set+=" $i"
         [[ -e $(sysdev "$g")/resource${i}_resize ]] && set+=" $i"
     done
-    mkdir -p "$STATE_DIR"
     [[ -r $f ]] && set+=" $(cat "$f")"
     set=$(tr ' ' '\n' <<<"$set" | grep -E '^[0-5]$' | sort -un | tr '\n' ' ')
-    echo "${set% }" > "$f"
+    if (( RECORD_BARS )); then
+        mkdir -p "$STATE_DIR" && echo "${set% }" > "$f"
+    fi 2>/dev/null
     echo "${set% }"
 }
 bar_unassigned_list() {   # expected memory BARs whose start address is zero
@@ -1319,6 +1325,7 @@ main() {
         esac
     done
     install_traps
+    case $cmd in resize|revert) RECORD_BARS=1 ;; esac
     if [[ $cmd == status ]]; then print_status; RUN_COMPLETE=1; return 0; fi
 
     log_info "resize-amdgpu-bars $VERSION: discovery, plan negotiation, bind guard, bounded driver load"

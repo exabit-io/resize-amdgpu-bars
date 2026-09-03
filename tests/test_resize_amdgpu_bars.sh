@@ -597,6 +597,23 @@ assert_eq "status: one line, nothing else on stdout" "$(wc -l < "$T/main.out")" 
 run_main diagnose; assert_eq "diagnose" "$?:$(grep -c 'Diagnostics complete' "$T/main.err")" "0:1"
 assert_eq "diagnose shows the six groups" "$(grep -c '^\[INFO\]  Group ' "$T/main.err")" 6
 run_main dry-run; assert_eq "dry-run" "$?:$(grep -c 'Dry run complete' "$T/main.err")" "0:1"
+echo "read-only commands leave the state directory as they found it"
+# A record from an earlier run of this boot: bars-* deliberately short of
+# what discovery sees (BAR5 missing), so a rewrite would show up. The
+# baseline-* files are the one record a read-only command may create (first
+# observation, 2.2); here they exist already and must not change either.
+rm -rf "$STATE_DIR"; mkdir -p "$STATE_DIR"
+for g in $(resizable_gpus); do echo 8 > "$STATE_DIR/baseline-$g"; done
+echo "0 2" > "$STATE_DIR/bars-0000:0b:00.0"; echo "plan=x" > "$STATE_DIR/summary"
+touch -d '2000-01-01 00:00:00' "$STATE_DIR"/*
+before=$(cd "$STATE_DIR" && ls | sort | tr '\n' ' ')
+run_main status; run_main diagnose; run_main dry-run
+assert_eq "read-only: no file added or removed" "$(cd "$STATE_DIR" && ls | sort | tr '\n' ' ')" "$before"
+assert_eq "read-only: bars-* content unchanged" "$(cat "$STATE_DIR/bars-0000:0b:00.0")" "0 2"
+assert_eq "read-only: nothing under the state dir touched" "$(find "$STATE_DIR" -mindepth 1 -newermt '2000-01-02' | wc -l)" 0
+assert_eq "read-only: the record is still read" "$(RECORD_BARS=0; rm -f "$STATE_DIR/bars-0000:0e:00.0"; echo "0 2" > "$STATE_DIR/bars-0000:0e:00.0"; set_bars 0000:0e:00.0 8 assigned; gpu_mem_bars 0000:0e:00.0; [[ -e $STATE_DIR/bars-0000:0e:00.0 ]] && cat "$STATE_DIR/bars-0000:0e:00.0")" "0 2 5
+0 2"
+rm -rf "$STATE_DIR"; mkdir -p "$STATE_DIR"
 journalctl() { :; }                   # no journal in the harness
 CHECK_LOG=$T/matrix.log
 run_main check -1; assert_eq "check -1: verdict line, live-only fields, nothing appended" "$?:$(grep -c 'verdict=OTHER - inspect.*windows=(live only).*kfd=(live only)' "$T/main.out"):$([[ -e $T/matrix.log ]] && echo yes || echo no)" "0:1:no"
@@ -617,6 +634,7 @@ assert_eq "journal: plain ASCII" "$(LC_ALL=C grep -c '[^ -~]' "$T/main.err")" 0
 assert_eq "journal: no rule or box lines" "$(grep -cE '^\[[A-Z]+\] +[-=_#*]{4,}' "$T/main.err")" 0
 assert_eq "journal: one-line phase banners" "$(grep -c '^== Phase ' "$T/main.err")" 3
 assert_eq "journal: nothing on stdout" "$(wc -c < "$T/main.out")" 0
+assert_eq "resize records the memory BARs it saw" "$(cat "$STATE_DIR/bars-0000:0b:00.0" 2>/dev/null)" "0 2 5"
 run_main resize --force; rc=$?
 assert_eq "second run takes the fast path: exit 0, nothing re-enumerated" "$rc:$(grep -c 'no re-enumeration needed' "$T/main.err")" "0:1"
 unload_driver; reset_regs; clear_stale_overrides; RULE=70vanilla
