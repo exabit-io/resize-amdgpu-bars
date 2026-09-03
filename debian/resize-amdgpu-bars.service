@@ -90,14 +90,18 @@ RestrictRealtime=yes
 LockPersonality=yes
 MemoryDenyWriteExecute=yes
 SystemCallArchitectures=native
-# Not set: SystemCallFilter=@system-service @module @raw-io (score 2.9 with
-# it). A wrong filter kills this unit with SIGSYS at boot, leaving amdgpu
-# blacklisted and no driver loaded, and it could not be validated on real
-# hardware before this release. Validate read-only, then enable it:
-#   systemd-run --wait --pipe --collect --unit=rgb-sandbox-test \
-#     -p SystemCallFilter='@system-service @module @raw-io' <other [Service]
-#     hardening lines as -p ...> -p ReadWritePaths=/run/resize-amdgpu-bars \
-#     /usr/sbin/resize-amdgpu-bars diagnose
+# Validated on real hardware (Mac Pro 7,1, 2026-09-03) inside a transient
+# unit carrying every line above: the 205-case harness, dry-run and
+# diagnose of the shipped binary, a real modprobe/modprobe -r (finit_module,
+# delete_module) and a real setpci config-space access all ran to
+# completion, no SIGSYS. @module covers modprobe amdgpu, @raw-io covers
+# setpci's port-I/O fallback when sysfs config access is unavailable. A
+# SIGSYS here would leave amdgpu blacklisted with no driver loaded, so any
+# change to this line needs a boot test (CONTRIBUTING.md).
+SystemCallFilter=@system-service @module @raw-io
+# A syscall the filter misses fails with EPERM (the tool reports the failed
+# command) instead of killing the unit with SIGSYS mid-resize.
+SystemCallErrorNumber=EPERM
 
 StandardOutput=journal+console
 StandardError=journal+console
