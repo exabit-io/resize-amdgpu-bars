@@ -66,6 +66,7 @@ tool.
 	SIGKILL 30 seconds later). A driver that hangs in the SR-IOV mailbox
 	path cannot be killed at all; the timeout exists so that the service
 	fails and boot continues instead of waiting forever. Default: 180.
+	See TIMING CONSTRAINT for the upper bound.
 
 *PROBE_WAIT*=_seconds_
 	How long to wait, after the driver is loaded, for every unguarded GPU
@@ -86,13 +87,24 @@ tool.
 
 # TIMING CONSTRAINT
 
-The service unit stops the run after *TimeoutStartSec* (480 seconds by
-default). The budget is discovery, up to *MAX_ROUNDS* re-enumeration cycles
-of about ten seconds each, *MODPROBE_TIMEOUT* plus the 30-second kill grace,
-*PROBE_WAIT*, and a margin. Keep *MODPROBE_TIMEOUT* + *PROBE_WAIT* +
-*MAX_ROUNDS* x *RESCAN_WAIT* comfortably below *TimeoutStartSec*, or raise
-the latter with a drop-in under
-_/etc/systemd/system/resize-amdgpu-bars.service.d/_.
+The service unit stops the run after *TimeoutStartSec* (480 seconds). The
+budget is discovery, up to *MAX_ROUNDS* re-enumeration cycles of about ten
+seconds each, *MODPROBE_TIMEOUT* plus the 30-second kill grace, *PROBE_WAIT*,
+and a margin.
+
+The part that always runs to its full length when the driver misbehaves is
+enforced: *MODPROBE_TIMEOUT* + 30 + *PROBE_WAIT* must be below 480, or the
+file is rejected at validation with a message naming both values and the
+budget. With the defaults that sum is 270. The tool knows the shipped
+value only; a drop-in under
+_/etc/systemd/system/resize-amdgpu-bars.service.d/_ that raises
+*TimeoutStartSec* does not raise the check.
+
+The re-enumeration rounds are not enforced, because a round only takes its
+full *RESCAN_WAIT* when the removed devices never come back, and then the
+run is failing anyway. Still, keep *MAX_ROUNDS* x *RESCAN_WAIT* in mind
+when raising either: the defaults allow 240 seconds of waiting in the
+worst case.
 
 # EXAMPLE
 

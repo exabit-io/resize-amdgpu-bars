@@ -28,11 +28,12 @@ override_dh_auto_build: check-version $(MANPAGES)
 override_dh_auto_clean:
 	rm -f $(MANPAGES)
 
+# The style checks (tabs, 80 columns, shellcheck -S style) are enforced
+# since the formatting pass; a build fails on a violation.
 override_dh_auto_test:
 	bash tests/test_resize_amdgpu_bars.sh ./$(SCRIPT)
-	# Advisory until the formatting pass makes the
-	# script pass the checks; then drop the "|| true".
-	bash tests/style/check.sh $(SCRIPT) || true
+	bash tests/style/check.sh $(SCRIPT) tests/test_resize_amdgpu_bars.sh \
+	    tests/style/check.sh tools/experiment-resource0-resize.sh
 
 # CHANGELOG.md is the upstream changelog (installed as changelog.gz).
 override_dh_installchangelogs:

@@ -47,12 +47,15 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends shellcheck
-      - name: tests/style/check.sh resize-amdgpu-bars
-        # Allowed to fail until the formatting pass lands (tabs, 80
-        # columns, shellcheck -S style clean). Drop continue-on-error in
-        # that commit.
-        continue-on-error: true
-        run: tests/style/check.sh resize-amdgpu-bars
+      - name: tests/style/check.sh on every bash source
+        # Enforced since the formatting pass (tabs, 80 columns,
+        # shellcheck -S style clean).
+        run: >-
+          tests/style/check.sh
+          resize-amdgpu-bars
+          tests/test_resize_amdgpu_bars.sh
+          tests/style/check.sh
+          tools/experiment-resource0-resize.sh
 
   package:
     name: dpkg-buildpackage + lintian

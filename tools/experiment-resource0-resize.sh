@@ -318,7 +318,7 @@ check_preconditions() {
 	blocked_if $(( $? != 0 )) \
 	    'pci=realloc is not on the kernel command line' \
 	    'pci=realloc is on the kernel command line'
-	if [[ $(systemctl is-active resize-amdgpu-bars.service 2> /dev/null) == \
+	if [[ $(systemctl is-active resize-amdgpu-bars.service 2>/dev/null) == \
 	    activating ]]; then
 		blocked_if 1 'resize-amdgpu-bars.service is still running'
 	else
