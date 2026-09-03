@@ -1,7 +1,7 @@
 Source: resize-gpu-bars
 Section: admin
 Priority: optional
-Maintainer: Nikolas Britton <nikolas.britton@gmail.com>
+Maintainer: Exabit, Inc. <packages@exabit.io>
 Build-Depends: debhelper-compat (= 13), scdoc
 Standards-Version: 4.6.2
 Rules-Requires-Root: no

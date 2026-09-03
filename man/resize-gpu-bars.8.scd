@@ -396,5 +396,5 @@ and non-GRUB bootloaders.
 
 # AUTHORS
 
-Nikolas Britton. MIT licence. Report bugs with the output of *resize-gpu-bars
+Exabit, Inc. MIT licence. Report bugs with the output of *resize-gpu-bars
 check -1* and *journalctl -u resize-gpu-bars -b* attached.

@@ -68,8 +68,8 @@ running the tool by hand.
 
 ## Reporting
 
-Report a vulnerability privately by email to the maintainer, Nikolas
-Britton, at nikolas.britton@gmail.com. Do not open a public issue for it.
+Report a vulnerability privately by email to security@exabit.io. Do not
+open a public issue for it.
 Include the version (`resize-gpu-bars --version`), the distribution and
 kernel, and what you observed; a `diagnose` output helps when the problem
 depends on the topology. You will get an acknowledgement, and a fix or an
