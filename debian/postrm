@@ -10,6 +10,14 @@ set -e
 warn() { echo "resize-amdgpu-bars: $*" >&2; }
 
 case "$1" in
+  purge)
+    # The check tool's log (kernel-matrix.log) lives here; the directory is
+    # shipped by the package and goes with it on purge.
+    rm -rf /var/log/resize-amdgpu-bars
+    ;;
+esac
+
+case "$1" in
   purge|remove)
     if command -v update-initramfs >/dev/null 2>&1; then
       update-initramfs -u -k all || warn "update-initramfs -u -k all failed; run it by hand so amdgpu autoloads again at boot."
