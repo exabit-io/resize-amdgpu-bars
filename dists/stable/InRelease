@@ -4,35 +4,35 @@ Hash: SHA512
 Architectures: amd64
 Codename: stable
 Components: main
-Date: Thu, 03 Sep 2026 05:02:17 +0000
+Date: Thu, 03 Sep 2026 05:04:41 +0000
 Description: resize-amdgpu-bars: Resizable BAR for AMD GPUs behind PCIe switches
 Label: resize-amdgpu-bars
 Origin: Exabit, Inc.
 Suite: stable
 MD5Sum:
- 20ffe0e13649e35a7e3a75205d4378c4              235 Release
+ 1149fca67964e0f6b360ff2840a3d051              235 Release
  cb7f4c493505e9c127de4287a6e3b68a             2104 main/binary-amd64/Packages
- 2e90fb7791d7808527b23182c7debc76             1252 main/binary-amd64/Packages.gz
+ ea9fe6e3a6dbe94b8a95f34e7ca613c8             1252 main/binary-amd64/Packages.gz
  cb87f202253dc8fa5f90a0f39589ff70             1336 main/binary-amd64/Packages.xz
 SHA1:
- 48259325354c64f2328395a814603760d7857980              235 Release
+ f8c036b0709a8e929c923a0d5ee299a21ba0bdec              235 Release
  6572806deef31b0030e6b1b50b295fe65ddd8a62             2104 main/binary-amd64/Packages
- 2c3a51d7492bda6b40f32833d8a614d662d8c6b1             1252 main/binary-amd64/Packages.gz
+ 23a5911b24aa7b3da25551d444c3b57ab8d6266c             1252 main/binary-amd64/Packages.gz
  a1a37538f3a4f6f40ec53febdaa6ede0690ccefc             1336 main/binary-amd64/Packages.xz
 SHA256:
- 635c75aececc11abd2ba16dccfb05dae972bbbd06aadfc8815e5c2f0c8e000ca              235 Release
+ 82e49f0ac80dbb1eed49ad85f14a6d83b6aa2763f36b4d3f6fb50ddbaac4da3c              235 Release
  b4c4497d2a6b83ea3f5b8610368ac0e17ed92d47d3d661229aa1f31b30c11316             2104 main/binary-amd64/Packages
- 8dd6bb5f8da93af9b811fb0b8953c9942865bf42e86e8957c9631f195e140190             1252 main/binary-amd64/Packages.gz
+ 22a0126d1d23ddd00bc16769d348e2a92c4b2ad3900125463290df56262b374b             1252 main/binary-amd64/Packages.gz
  1a3a187d3af19387f478e2790f9a10dd62dba4fa3dcd0bc95e04a7aff13aa2f5             1336 main/binary-amd64/Packages.xz
 SHA512:
- 4fa51fd3dd93b1480086977d46dbbc5d59d51e137a5ee595adabda9ca9268a68f1de9702beb4b840005e0e03b9287df001fd32d57c4d0c2aa11c298516c3725c              235 Release
+ 5d74c6dd4f46d3469a974f6550c7ad78b45a6944ecac0307c20004fce26ff64eeaaf928d7a9ccbaa1453af885f7aa2a4894e7c1a89a455c690afa7cc45481841              235 Release
  e72088528263a76f7b79caf0678fb38e7423d7014ac36576085b428dc1d8e720aedc98054648b004c9e071173d9ab486c9eeecc31bd560069fc89f6d48cd5a5d             2104 main/binary-amd64/Packages
- 2a87d894b6638bec031d11cd3ff520f226d4ed7be07a0ac4fd1ecf16492c3e9081d5f2efc9c573082bd868b7cbc7612839a4a4e2212f107f441c43fabfc27365             1252 main/binary-amd64/Packages.gz
+ 2ebdfe9cb2260021403457290e43caee1684aab3e7bc06807396620d86146b395628d09c6f5a51b221bd23df0db9901f3bed23f421a762eef4a2775b8adb8b32             1252 main/binary-amd64/Packages.gz
  ce764058d88ebde6122f2ab883d2f05de7633121f5926e2e451795ae8cb03f730f776f560dcef24a069f5057f50da1c33d2603513d4dc7db01b95085121b72b5             1336 main/binary-amd64/Packages.xz
 -----BEGIN PGP SIGNATURE-----
 
-iHUEARYKAB0WIQRgQ617NTP2FcFfSNBHIxZlD0viMAUCapj/WQAKCRBHIxZlD0vi
-MH0SAQDRQC/XnuwgJ12DTXd4kqpbk3n+URjMMVp6NhXg1pNpewD/bT5IXSEsz8Sn
-p2gHd+av3jDlZqjeXNbrouSRMFxf3A0=
-=JIO4
+iHUEARYKAB0WIQRgQ617NTP2FcFfSNBHIxZlD0viMAUCapj/6QAKCRBHIxZlD0vi
+MM03AP4tMo/mShqG8yt+RyCnky31m0L/5N0Rmlp6iXEAsSnBtAEAppNITHslG4T3
+0exSfZL7UvrXQvXuJtYyXQs+Pvp0nAs=
+=l1WP
 -----END PGP SIGNATURE-----
