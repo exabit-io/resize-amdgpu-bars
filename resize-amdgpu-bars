@@ -69,6 +69,8 @@
 # No errexit and no pipefail: both have silently killed this tool before
 # (a "lsmod | grep -q" and an empty "grep -v" pipeline). Every return value
 # that matters is checked explicitly instead.
+# shellcheck disable=SC2178  # it does not follow "local -n" to the per-group
+#                            # arrays and reads the name reference as a string
 set -u
 shopt -s nullglob
 
@@ -182,44 +184,49 @@ load_config() {
 load_config || exit 1
 
 # ---------------------------------------------------------------------------
-# Discovery state (filled by discover_gpus). All keyed by GPU BDF.
+# Discovery state (filled by discover_gpus). All keyed by GPU BDF. Naming:
+# mutable state is lowercase, uppercase is reserved for true constants and
+# the configuration keys above.
 # ---------------------------------------------------------------------------
-GPUS=()                       # ordered list of GPU BDFs (domain:bus:dev.fn)
-declare -A GPU_NAME=()           # lspci short name
-declare -A GPU_FUNCS=()          # all functions of the same device (GPU + audio ...)
-declare -A GPU_REBAR_CAP=()      # ReBAR ext-cap offset (hex) or "" if none
-declare -A GPU_REBAR_CTRL=()     # control register offset for BAR0 (hex) or ""
-declare -A GPU_SUPPORTED=()      # bitmask of supported size indices for BAR0
-declare -A GPU_MAX_INDEX=()      # target size index (device max, capped)
-declare -A GPU_BASE_INDEX=()     # baseline (firmware) size index
-declare -A GPU_CUR_INDEX=()      # size index currently programmed
-declare -A GPU_ROOT=()           # re-enumeration root bridge BDF
-declare -A GPU_ROOT_IMPURE=()    # "1" if the subtree above the root has non-GPU devices
-GROUPS_LIST=()                # unique re-enumeration roots, in order
-declare -A GROUP_MEMBERS=()      # root -> space-separated GPU BDFs
-declare -A GROUP_RESCAN=()       # root -> sysfs rescan file to use
-declare -A GROUP_CHAIN=()        # root -> bridges between root and the GPUs
-ACTIVE_GROUPS=()              # groups the current plan attempt has to touch
-ACHIEVED_PLAN="none"
-LAST_LOSERS=""                # GPUs that lost a BAR in the last rejected plan
-GUARD_BLOCKED=0               # GPUs the bind guard fenced off in this run
-VERIFY_DEGRADED=0             # 1 when verification found a driverless, missing or BAR-less GPU
+gpus=()                       # ordered list of GPU BDFs (domain:bus:dev.fn)
+declare -A gpu_name=()           # lspci short name
+declare -A gpu_funcs=()          # all functions of the same device (GPU + audio ...)
+declare -A gpu_rebar_cap=()      # ReBAR ext-cap offset (hex) or "" if none
+declare -A gpu_rebar_ctrl=()     # control register offset for BAR0 (hex) or ""
+declare -A gpu_supported=()      # bitmask of supported size indices for BAR0
+declare -A gpu_max_index=()      # target size index (device max, capped)
+declare -A gpu_base_index=()     # baseline (firmware) size index
+declare -A gpu_cur_index=()      # size index currently programmed
+declare -A gpu_root=()           # re-enumeration root bridge BDF
+declare -A gpu_root_impure=()    # "1" if the subtree above the root has non-GPU devices
+group_roots=()                # unique re-enumeration roots, in order
+# Per-group lists are arrays; a BDF is not a valid identifier, so the map
+# holds the array's name (grp_members_0000_06_00_0 for 0000:06:00.0) and
+# the users take a name reference: local -n members=${group_members[$r]}
+declare -A group_members=()      # root -> name of the array of its GPU BDFs
+declare -A group_rescan=()       # root -> sysfs rescan file to use
+declare -A group_chain=()        # root -> name of the array of bridges between root and the GPUs
+active_groups=()              # groups the current plan attempt has to touch
+achieved_plan="none"
+last_losers=()                # GPUs that lost a BAR in the last rejected plan
+guard_blocked=0               # GPUs the bind guard fenced off in this run
+verify_degraded=0             # 1 when verification found a driverless, missing or BAR-less GPU
 # Register state we own between a ReBAR write and the re-enumeration that
 # makes the kernel see it. A "dirty" GPU decodes a different aperture size
 # than the kernel assigned; handing it to a driver is what the bind guard
 # exists to prevent, so the guard refuses while any GPU is dirty.
-declare -A GPU_DIRTY=()          # "1" while a written size index has not been re-enumerated
-declare -A GPU_DIRTY_FROM=()     # size index the kernel's current assignment corresponds to
-declare -A GPU_DECODE_OFF=()     # "1" while we hold memory decode disabled around a write
-declare -A OVERRIDE_SET=()       # functions whose driver_override this run wrote
-declare -A OVERRIDE_KEEP=()      # ... deliberately, to fence off a BAR-less GPU (left in place)
-TOUCHED=0                     # 1 once the run has started changing hardware state
+declare -A gpu_dirty=()          # "1" while a written size index has not been re-enumerated
+declare -A gpu_dirty_from=()     # size index the kernel's current assignment corresponds to
+declare -A gpu_decode_off=()     # "1" while we hold memory decode disabled around a write
+declare -A override_set=()       # functions whose driver_override this run wrote
+declare -A override_keep=()      # ... deliberately, to fence off a BAR-less GPU (left in place)
+touched=0                     # 1 once the run has started changing hardware state
 # Only a run that changes hardware (resize, revert) records the memory BARs
 # it sees in STATE_DIR; status, diagnose, dry-run and check read the record
 # but leave the directory exactly as they found it ("change nothing").
-RECORD_BARS=0
-RUN_COMPLETE=0                # 1 once the run reached its intended end
-CLEANUP_DONE=0
+record_bars=0
+run_complete=0                # 1 once the run reached its intended end
+cleanup_done=0
 
 # ---------------------------------------------------------------------------
 # Small helpers
@@ -235,6 +242,13 @@ attr()   { cat "$(sysdev "$1")/$2" 2>/dev/null || true; }
 have_tool() { command -v "$1" >/dev/null 2>&1; }
 is_bridge() { [[ $(attr "$1" class) == 0x0604* ]]; }
 present()   { [[ -e $(sysdev "$1") ]]; }
+# in_list NEEDLE ITEM... -- true when NEEDLE is one of the ITEMs
+in_list() {
+    local needle=$1 x
+    shift
+    for x in "$@"; do [[ $x == "$needle" ]] && return 0; done
+    return 1
+}
 # driver_of BDF -- prints the name of the driver bound to the function, or "none"
 driver_of() {
     local d
@@ -307,14 +321,15 @@ gpu_mem_bars() {   # prints the expected memory BAR indices of a GPU, sorted
     done
     [[ -r $f ]] && set+=" $(cat "$f")"
     set=$(tr ' ' '\n' <<<"$set" | grep -E '^[0-5]$' | sort -un | tr '\n' ' ')
-    if (( RECORD_BARS )); then
+    if (( record_bars )); then
         mkdir -p "$STATE_DIR" && echo "${set% }" > "$f"
     fi 2>/dev/null
     echo "${set% }"
 }
 bar_unassigned_list() {   # expected memory BARs whose start address is zero
-    local g=$1 i line start out=""
-    for i in $(gpu_mem_bars "$g"); do
+    local g=$1 i line start out="" bars
+    read -ra bars <<<"$(gpu_mem_bars "$g")"
+    for i in "${bars[@]}"; do
         line=$(sed -n "$((i + 1))p" "$(sysdev "$g")/resource" 2>/dev/null) || { out+="$i "; continue; }
         start=${line%% *}
         [[ -z $start || $start == 0x0000000000000000 ]] && out+="$i "
@@ -356,14 +371,14 @@ find_rebar_ctrl_for_bar0() {
 # resourceN_resize sysfs attribute): cap bits 31:4 = indices 0..27, control
 # bits 31:16 = indices 28..43.
 read_supported_mask() {
-    local bdf=$1 ctrl=${GPU_REBAR_CTRL[$1]:-} capreg cval
+    local bdf=$1 ctrl=${gpu_rebar_ctrl[$1]:-} capreg cval
     [[ -n $ctrl ]] || { echo 0; return; }
     capreg=$(setpci -s "$bdf" "0x$(printf '%x' $(( 16#$ctrl - 4 ))).l" 2>/dev/null) || { echo 0; return; }
     cval=$(setpci -s "$bdf" "0x$ctrl.l" 2>/dev/null) || cval=0
     printf '%016x\n' $(( ((16#$capreg >> 4) & 0x0FFFFFFF) | (((16#$cval >> 16) & 0xFFFF) << 28) ))
 }
 read_size_index() {   # current BAR0 size index, -1 when unknown
-    local bdf=$1 ctrl=${GPU_REBAR_CTRL[$1]:-} val
+    local bdf=$1 ctrl=${gpu_rebar_ctrl[$1]:-} val
     [[ -n $ctrl ]] || { echo -1; return; }
     val=$(setpci -s "$bdf" "0x$ctrl.l" 2>/dev/null) || { echo -1; return; }
     echo $(( (16#$val >> 8) & 0x3F ))
@@ -373,25 +388,25 @@ read_size_index() {   # current BAR0 size index, -1 when unknown
 # a fenced-off or rolled-back GPU never gets one; returns 0 when decode is on
 restore_decode() {
     local bdf=$1 cmd
-    [[ -n ${GPU_DECODE_OFF[$bdf]:-} ]] || return 0
+    [[ -n ${gpu_decode_off[$bdf]:-} ]] || return 0
     cmd=$(setpci -s "$bdf" COMMAND 2>/dev/null) || return 1
     setpci -s "$bdf" COMMAND="$(printf '%04x' $(( 16#$cmd | 0x2 )))" 2>/dev/null || return 1
-    unset "GPU_DECODE_OFF[$bdf]"
+    unset "gpu_decode_off[$bdf]"
     return 0
 }
 # write_size_index BDF INDEX -- programs BAR0's size index with memory decode
 # held off for the write (PCIe 7.8.6) and restored afterwards, whatever the
-# outcome; keeps GPU_DIRTY in step with what the register now says relative
+# outcome; keeps gpu_dirty in step with what the register now says relative
 # to the kernel's assignment; returns 0 when the readback equals INDEX
 write_size_index() {
-    local bdf=$1 want=$2 ctrl=${GPU_REBAR_CTRL[$1]:-} val new cmd have now rc=1
+    local bdf=$1 want=$2 ctrl=${gpu_rebar_ctrl[$1]:-} val new cmd have now rc=1
     [[ -n $ctrl ]] || return 1
     have=$(read_size_index "$bdf"); (( have >= 0 )) || return 1
     cmd=$(setpci -s "$bdf" COMMAND 2>/dev/null) || return 1
     if (( 16#$cmd & 0x2 )); then
-        GPU_DECODE_OFF[$bdf]=1
+        gpu_decode_off[$bdf]=1
         setpci -s "$bdf" COMMAND="$(printf '%04x' $(( 16#$cmd & ~0x2 )))" 2>/dev/null \
-            || { unset "GPU_DECODE_OFF[$bdf]"; return 1; }
+            || { unset "gpu_decode_off[$bdf]"; return 1; }
     fi
     if val=$(setpci -s "$bdf" "0x$ctrl.l" 2>/dev/null); then
         new=$(printf '%08x' $(( (16#$val & ~0x3F00) | (want << 8) )))
@@ -399,10 +414,10 @@ write_size_index() {
     fi
     now=$(read_size_index "$bdf")
     [[ $now == "$want" ]] && rc=0
-    if [[ -z ${GPU_DIRTY[$bdf]:-} && $now != "$have" ]]; then
-        GPU_DIRTY[$bdf]=1; GPU_DIRTY_FROM[$bdf]=$have
-    elif [[ -n ${GPU_DIRTY[$bdf]:-} && $now == "${GPU_DIRTY_FROM[$bdf]}" ]]; then
-        unset "GPU_DIRTY[$bdf]" "GPU_DIRTY_FROM[$bdf]"
+    if [[ -z ${gpu_dirty[$bdf]:-} && $now != "$have" ]]; then
+        gpu_dirty[$bdf]=1; gpu_dirty_from[$bdf]=$have
+    elif [[ -n ${gpu_dirty[$bdf]:-} && $now == "${gpu_dirty_from[$bdf]}" ]]; then
+        unset "gpu_dirty[$bdf]" "gpu_dirty_from[$bdf]"
     fi
     restore_decode "$bdf" || log_warn "  $bdf: could not re-enable memory decode"
     return "$rc"
@@ -420,9 +435,9 @@ resize_in_place() {
 # kernel's assignment corresponds to; returns 0 when no GPU is left dirty
 rollback_dirty() {
     local g from left=0
-    for g in "${!GPU_DIRTY[@]}"; do
+    for g in "${!gpu_dirty[@]}"; do
         present "$g" || continue
-        from=${GPU_DIRTY_FROM[$g]}
+        from=${gpu_dirty_from[$g]}
         if write_size_index "$g" "$from"; then
             log_info "  $g size index rolled back to $from"
         else
@@ -435,21 +450,23 @@ rollback_dirty() {
 # once the kernel has removed and re-enumerated them its assignment is fresh
 mark_group_reenumerated() {
     local g
-    for g in ${GROUP_MEMBERS[$1]:-}; do unset "GPU_DIRTY[$g]" "GPU_DIRTY_FROM[$g]"; done
+    [[ -n ${group_members[$1]:-} ]] || return 0
+    local -n members=${group_members[$1]}
+    for g in "${members[@]}"; do unset "gpu_dirty[$g]" "gpu_dirty_from[$g]"; done
 }
 
 # ---------------------------------------------------------------------------
 # Driver alias table: vendor 0x1002 + class 0x03 also matches cards the
 # radeon driver owns, which are out of scope; the modalias check keeps them
-# out of GPUS so they are never unbound, resized or guarded.
+# out of gpus so they are never unbound, resized or guarded.
 # ---------------------------------------------------------------------------
-DRIVER_ALIASES=()
-# load_driver_aliases -- fills DRIVER_ALIASES with $DRIVER's PCI alias
+driver_aliases=()
+# load_driver_aliases -- fills driver_aliases with $DRIVER's PCI alias
 # patterns from ALIAS_FILE (tests), modinfo, or modules.alias; returns 0 when
 # at least one pattern was found
 load_driver_aliases() {
     local line src=""
-    DRIVER_ALIASES=()
+    driver_aliases=()
     if [[ -n $ALIAS_FILE ]]; then
         src=$ALIAS_FILE
     elif modinfo -F alias "$DRIVER" >/dev/null 2>&1; then
@@ -461,13 +478,13 @@ load_driver_aliases() {
     fi
     while read -r line; do
         case $line in
-            alias\ pci:*\ "$DRIVER") line=${line#alias }; DRIVER_ALIASES+=("${line% *}") ;;
+            alias\ pci:*\ "$DRIVER") line=${line#alias }; driver_aliases+=("${line% *}") ;;
             alias\ *) ;;
-            pci:*) DRIVER_ALIASES+=("$line") ;;
+            pci:*) driver_aliases+=("$line") ;;
         esac
     done < "$src" 2>/dev/null
     [[ -n ${tmp:-} ]] && rm -f "$tmp"
-    (( ${#DRIVER_ALIASES[@]} > 0 ))
+    (( ${#driver_aliases[@]} > 0 ))
 }
 # match_modalias PATTERN MODALIAS -- true when MODALIAS matches the alias
 # PATTERN (the table's "*" wildcards are shell globs)
@@ -479,10 +496,10 @@ match_modalias() {
 # modalias; also true, with a warning, when no table could be read at all
 driver_claims() {
     local modalias pat
-    (( ${#DRIVER_ALIASES[@]} > 0 )) || return 0
+    (( ${#driver_aliases[@]} > 0 )) || return 0
     modalias=$(attr "$1" modalias)
     [[ -n $modalias ]] || return 0   # kernels without the attribute: cannot tell, accept
-    for pat in "${DRIVER_ALIASES[@]}"; do match_modalias "$pat" "$modalias" && return 0; done
+    for pat in "${driver_aliases[@]}"; do match_modalias "$pat" "$modalias" && return 0; done
     return 1
 }
 
@@ -508,10 +525,14 @@ discover_gpus() {
     local d bdf vendor class
     # Start from nothing: a second discovery in the same process (status
     # after a run, the test harness) must not inherit stale members.
-    GPUS=(); GROUPS_LIST=()
-    GPU_NAME=(); GPU_FUNCS=(); GPU_REBAR_CAP=(); GPU_REBAR_CTRL=(); GPU_SUPPORTED=()
-    GPU_MAX_INDEX=(); GPU_BASE_INDEX=(); GPU_CUR_INDEX=(); GPU_ROOT=(); GPU_ROOT_IMPURE=()
-    GROUP_MEMBERS=(); GROUP_RESCAN=(); GROUP_CHAIN=()
+    local r
+    for r in "${group_roots[@]}"; do
+        unset "${group_members[$r]:-}" "${group_chain[$r]:-}"
+    done
+    gpus=(); group_roots=()
+    gpu_name=(); gpu_funcs=(); gpu_rebar_cap=(); gpu_rebar_ctrl=(); gpu_supported=()
+    gpu_max_index=(); gpu_base_index=(); gpu_cur_index=(); gpu_root=(); gpu_root_impure=()
+    group_members=(); group_rescan=(); group_chain=()
     load_driver_aliases || log_warn "No PCI alias table for $DRIVER (module not installed for $(uname -r)?); accepting every AMD display device"
     for d in "$SYSFS"/bus/pci/devices/*; do
         bdf=$(basename "$d")
@@ -523,80 +544,91 @@ discover_gpus() {
         if [[ " $EXCLUDE_GPUS " == *" $bdf "* ]]; then
             log_info "  $bdf excluded by configuration"; continue
         fi
-        GPUS+=("$bdf")
+        gpus+=("$bdf")
     done
-    (( ${#GPUS[@]} > 0 )) || return 0
+    (( ${#gpus[@]} > 0 )) || return 0
 
-    local funcs anc root impure eps e
-    for bdf in "${GPUS[@]}"; do
-        GPU_NAME[$bdf]=$(lspci -mm -s "$bdf" 2>/dev/null | awk -F'"' '{print $6}')
+    local funcs anc root impure e
+    for bdf in "${gpus[@]}"; do
+        gpu_name[$bdf]=$(lspci -mm -s "$bdf" 2>/dev/null | awk -F'"' '{print $6}')
         funcs=""
         for d in "$(sysdev "$bdf")"/../"${bdf%.*}".*; do funcs+="$(basename "$(readlink -f "$d")") "; done
-        GPU_FUNCS[$bdf]=${funcs% }
+        gpu_funcs[$bdf]=${funcs% }
 
-        GPU_REBAR_CAP[$bdf]=$(find_rebar_cap "$bdf")
-        GPU_REBAR_CTRL[$bdf]=""
-        GPU_SUPPORTED[$bdf]=0
-        GPU_MAX_INDEX[$bdf]=-1; GPU_BASE_INDEX[$bdf]=-1; GPU_CUR_INDEX[$bdf]=-1
-        if [[ -n ${GPU_REBAR_CAP[$bdf]} ]]; then
-            GPU_REBAR_CTRL[$bdf]=$(find_rebar_ctrl_for_bar0 "$bdf" "${GPU_REBAR_CAP[$bdf]}")
+        gpu_rebar_cap[$bdf]=$(find_rebar_cap "$bdf")
+        gpu_rebar_ctrl[$bdf]=""
+        gpu_supported[$bdf]=0
+        gpu_max_index[$bdf]=-1; gpu_base_index[$bdf]=-1; gpu_cur_index[$bdf]=-1
+        if [[ -n ${gpu_rebar_cap[$bdf]} ]]; then
+            gpu_rebar_ctrl[$bdf]=$(find_rebar_ctrl_for_bar0 "$bdf" "${gpu_rebar_cap[$bdf]}")
         fi
-        if [[ -n ${GPU_REBAR_CTRL[$bdf]} ]]; then
-            GPU_SUPPORTED[$bdf]=$(attr "$bdf" resource0_resize)
-            [[ -n ${GPU_SUPPORTED[$bdf]} ]] || GPU_SUPPORTED[$bdf]=$(read_supported_mask "$bdf")
-            GPU_CUR_INDEX[$bdf]=$(read_size_index "$bdf")
+        if [[ -n ${gpu_rebar_ctrl[$bdf]} ]]; then
+            gpu_supported[$bdf]=$(attr "$bdf" resource0_resize)
+            [[ -n ${gpu_supported[$bdf]} ]] || gpu_supported[$bdf]=$(read_supported_mask "$bdf")
+            gpu_cur_index[$bdf]=$(read_size_index "$bdf")
             local hi
-            hi=$(highest_bit "${GPU_SUPPORTED[$bdf]}")
+            hi=$(highest_bit "${gpu_supported[$bdf]}")
             if [[ -n $MAX_SIZE_INDEX ]] && (( hi > MAX_SIZE_INDEX )); then hi=$MAX_SIZE_INDEX; fi
-            GPU_MAX_INDEX[$bdf]=$hi
-            GPU_BASE_INDEX[$bdf]=$(observed_baseline "$bdf" "${GPU_CUR_INDEX[$bdf]}")
+            gpu_max_index[$bdf]=$hi
+            gpu_base_index[$bdf]=$(observed_baseline "$bdf" "${gpu_cur_index[$bdf]}")
         fi
 
     done
 
     # Second pass (needs every GPU's function list): re-enumeration root =
     # highest ancestor whose subtree holds nothing but our GPU functions.
-    for bdf in "${GPUS[@]}"; do
+    for bdf in "${gpus[@]}"; do
         root=""; impure=0
         while read -r anc; do
             [[ -n $anc ]] || continue
-            eps=$(subtree_endpoints "$anc")
             local ok=1
-            for e in $eps; do
+            while read -r e; do
                 if ! is_gpu_function "$e"; then ok=0; break; fi
-            done
+            done < <(subtree_endpoints "$anc")
             if (( ok )); then root=$anc; else impure=1; break; fi
         done < <(pci_ancestors "$bdf")
-        GPU_ROOT[$bdf]=$root
-        GPU_ROOT_IMPURE[$bdf]=$impure
+        gpu_root[$bdf]=$root
+        gpu_root_impure[$bdf]=$impure
     done
 
-    # Group by root.
-    local r members
-    for bdf in "${GPUS[@]}"; do
-        r=${GPU_ROOT[$bdf]}
+    # Group by root. Each group's member and chain lists are global arrays
+    # named after the root; the maps hold the names.
+    local id
+    for bdf in "${gpus[@]}"; do
+        r=${gpu_root[$bdf]}
         [[ -n $r ]] || r="none:$bdf"
-        if [[ -z ${GROUP_MEMBERS[$r]:-} ]]; then GROUPS_LIST+=("$r"); GROUP_MEMBERS[$r]=$bdf
-        else GROUP_MEMBERS[$r]+=" $bdf"; fi
+        if [[ -z ${group_members[$r]:-} ]]; then
+            id=${r//[:.]/_}
+            group_roots+=("$r")
+            group_members[$r]=grp_members_$id
+            group_chain[$r]=grp_chain_$id
+            declare -ga "grp_members_$id=()" "grp_chain_$id=()"
+        fi
+        local -n members=${group_members[$r]}
+        members+=("$bdf")
     done
-    for r in "${GROUPS_LIST[@]}"; do
-        [[ $r == none:* ]] && { GROUP_RESCAN[$r]=""; GROUP_CHAIN[$r]=""; continue; }
+    for r in "${group_roots[@]}"; do
+        [[ $r == none:* ]] && { group_rescan[$r]=""; continue; }
         local parent bus
         parent=$(pci_parent "$r")
         if [[ -n $parent ]]; then
-            GROUP_RESCAN[$r]="$(sysdev "$parent")/rescan"
+            group_rescan[$r]="$(sysdev "$parent")/rescan"
         else
             bus=${r%:*}                    # domain:bus of the root port
-            GROUP_RESCAN[$r]="$SYSFS/devices/pci${bus}/pci_bus/${bus}/rescan"
+            group_rescan[$r]="$SYSFS/devices/pci${bus}/pci_bus/${bus}/rescan"
         fi
-        members=""
-        for bdf in ${GROUP_MEMBERS[$r]}; do
-            for anc in $(pci_ancestors "$bdf"); do
-                [[ " $members " == *" $anc "* ]] || members+="$anc "
+        # The chain: every bridge between the root and a member, sorted.
+        local -n members=${group_members[$r]} chain=${group_chain[$r]}
+        local -A seen=()
+        for bdf in "${members[@]}"; do
+            while read -r anc; do
+                seen[$anc]=1
                 [[ $anc == "$r" ]] && break
-            done
+            done < <(pci_ancestors "$bdf")
         done
-        GROUP_CHAIN[$r]=$(tr ' ' '\n' <<<"${members% }" | sort | tr '\n' ' ')
+        chain=()
+        (( ${#seen[@]} > 0 )) || continue
+        while read -r anc; do chain+=("$anc"); done < <(printf '%s\n' "${!seen[@]}" | sort)
     done
     return 0
 }
@@ -604,18 +636,18 @@ discover_gpus() {
 # A function is "ours" if it is a listed GPU or another function of one.
 is_gpu_function() {
     local f=$1 g
-    for g in "${GPUS[@]}"; do
-        [[ " ${GPU_FUNCS[$g]:-$g} " == *" $f "* ]] && return 0
+    for g in "${gpus[@]}"; do
+        [[ " ${gpu_funcs[$g]:-$g} " == *" $f "* ]] && return 0
     done
     return 1
 }
 
-resizable_gpus() { local g; for g in "${GPUS[@]}"; do [[ -n ${GPU_REBAR_CTRL[$g]} ]] && echo "$g"; done; }
+resizable_gpus() { local g; for g in "${gpus[@]}"; do [[ -n ${gpu_rebar_ctrl[$g]} ]] && echo "$g"; done; }
 
 # GPUs with any unassigned memory BAR (these must never meet the driver).
 failed_gpus() {
     local g
-    for g in "${GPUS[@]}"; do
+    for g in "${gpus[@]}"; do
         present "$g" || { echo "$g"; continue; }
         [[ -n $(bar_unassigned_list "$g") ]] && echo "$g"
     done
@@ -627,25 +659,26 @@ failed_gpus() {
 # ---------------------------------------------------------------------------
 report_discovery() {
     local g r b
-    log_info "GPUs found: ${#GPUS[@]}   re-enumeration groups: ${#GROUPS_LIST[@]}"
-    for r in "${GROUPS_LIST[@]}"; do
+    log_info "GPUs found: ${#gpus[@]}   re-enumeration groups: ${#group_roots[@]}"
+    for r in "${group_roots[@]}"; do
+        local -n members=${group_members[$r]} chain=${group_chain[$r]}
         if [[ $r == none:* ]]; then
-            log_info "Group (no removable root): ${GROUP_MEMBERS[$r]} sits directly on a root bus; resized in place via resource0_resize"
+            log_info "Group (no removable root): ${members[*]} sits directly on a root bus; resized in place via resource0_resize"
         else
-            log_info "Group root $r  (rescan via ${GROUP_RESCAN[$r]})"
-            for b in ${GROUP_CHAIN[$r]}; do
+            log_info "Group root $r  (rescan via ${group_rescan[$r]})"
+            for b in "${chain[@]}"; do
                 local pref
                 pref=$(lspci -s "$b" -vv 2>/dev/null | sed -n 's/.*Prefetchable memory behind bridge: *//p' | head -1)
                 log_info "    bridge $b  pref window: ${pref:-none}"
             done
         fi
-        for g in ${GROUP_MEMBERS[$r]}; do
-            log_info "  GPU $g  ${GPU_NAME[$g]}"
-            log_info "    functions: ${GPU_FUNCS[$g]}"
-            if [[ -n ${GPU_REBAR_CTRL[$g]} ]]; then
-                log_info "    ReBAR cap @0x${GPU_REBAR_CAP[$g]} ctrl @0x${GPU_REBAR_CTRL[$g]}  supported mask ${GPU_SUPPORTED[$g]}"
-                log_info "    size index: current $(size_index_to_human "${GPU_CUR_INDEX[$g]}") (${GPU_CUR_INDEX[$g]})  baseline $(size_index_to_human "${GPU_BASE_INDEX[$g]}")  target $(size_index_to_human "${GPU_MAX_INDEX[$g]}")"
-            elif [[ -n ${GPU_REBAR_CAP[$g]} ]]; then
+        for g in "${members[@]}"; do
+            log_info "  GPU $g  ${gpu_name[$g]}"
+            log_info "    functions: ${gpu_funcs[$g]}"
+            if [[ -n ${gpu_rebar_ctrl[$g]} ]]; then
+                log_info "    ReBAR cap @0x${gpu_rebar_cap[$g]} ctrl @0x${gpu_rebar_ctrl[$g]}  supported mask ${gpu_supported[$g]}"
+                log_info "    size index: current $(size_index_to_human "${gpu_cur_index[$g]}") (${gpu_cur_index[$g]})  baseline $(size_index_to_human "${gpu_base_index[$g]}")  target $(size_index_to_human "${gpu_max_index[$g]}")"
+            elif [[ -n ${gpu_rebar_cap[$g]} ]]; then
                 log_warn "    ReBAR capability present but no BAR0 entry found; will not resize"
             else
                 log_info "    no Resizable BAR capability; will not resize (driver only)"
@@ -657,7 +690,7 @@ report_discovery() {
             ovr=$(attr "$g" driver_override)
             [[ $drv != none ]] && log_info "    driver: $drv"
             [[ -n $ovr && $ovr != "(null)" ]] && log_warn "    driver_override='$ovr' (binding blocked by a previous run)"
-            (( ${GPU_ROOT_IMPURE[$g]} )) && log_warn "    subtree above $r has non-GPU devices; parent window cannot be re-sized"
+            (( ${gpu_root_impure[$g]} )) && log_warn "    subtree above $r has non-GPU devices; parent window cannot be re-sized"
         done
     done
     # Everything else on the bus that we promise not to touch.
@@ -674,7 +707,7 @@ report_discovery() {
 
 report_bars() {
     local g unassigned
-    for g in "${GPUS[@]}"; do
+    for g in "${gpus[@]}"; do
         present "$g" || { log_info "    $g  (not present)"; continue; }
         unassigned=$(bar_unassigned_list "$g")
         log_info "    $g  BAR0=$(human_bytes "$(bar0_bytes "$g")")  unassigned: ${unassigned:-none}"
@@ -684,47 +717,64 @@ report_bars() {
 # ---------------------------------------------------------------------------
 # Plan machinery: a plan is an associative array bdf -> size index
 # ---------------------------------------------------------------------------
-declare -A PLAN=()
-plan_all_max()  { local g; for g in $(resizable_gpus); do PLAN[$g]=${GPU_MAX_INDEX[$g]}; done; }
-plan_baseline() { local g; for g in $(resizable_gpus); do PLAN[$g]=${GPU_BASE_INDEX[$g]}; done; }
-plan_is_baseline() { local g; for g in $(resizable_gpus); do [[ ${PLAN[$g]} == "${GPU_BASE_INDEX[$g]}" ]] || return 1; done; }
-describe_plan() { local g out=""; for g in $(resizable_gpus); do out+="  $g=$(size_index_to_human "${PLAN[$g]}")"; done; echo "$out"; }
+declare -A plan=()
+plan_all_max() {
+    local g
+    while read -r g; do plan[$g]=${gpu_max_index[$g]}; done < <(resizable_gpus)
+}
+plan_baseline() {
+    local g
+    while read -r g; do plan[$g]=${gpu_base_index[$g]}; done < <(resizable_gpus)
+}
+plan_is_baseline() {
+    local g
+    while read -r g; do
+        [[ ${plan[$g]} == "${gpu_base_index[$g]}" ]] || return 1
+    done < <(resizable_gpus)
+}
+describe_plan() {
+    local g out=""
+    while read -r g; do out+="  $g=$(size_index_to_human "${plan[$g]}")"; done < <(resizable_gpus)
+    echo "$out"
+}
 
 # group_needs_work ROOT -- true when the current plan has to touch ROOT: a
 # member is missing, has an unassigned memory BAR, or is not at the planned
 # size (register and assigned BAR0 both)
 group_needs_work() {
     local g
-    for g in ${GROUP_MEMBERS[$1]}; do
+    local -n members=${group_members[$1]}
+    for g in "${members[@]}"; do
         present "$g" || return 0
         [[ -n $(bar_unassigned_list "$g") ]] && return 0
-        [[ -n ${GPU_REBAR_CTRL[$g]} ]] || continue
-        [[ $(read_size_index "$g") == "${PLAN[$g]}" ]] || return 0
-        (( $(bar0_bytes "$g") == (1 << (PLAN[$g] + 20)) )) || return 0
+        [[ -n ${gpu_rebar_ctrl[$g]} ]] || continue
+        [[ $(read_size_index "$g") == "${plan[$g]}" ]] || return 0
+        (( $(bar0_bytes "$g") == (1 << (plan[$g] + 20)) )) || return 0
     done
     return 1
 }
-# plan_active_groups -- fills ACTIVE_GROUPS with the groups the current plan
+# plan_active_groups -- fills active_groups with the groups the current plan
 # has to touch; returns 0 when there is at least one
 plan_active_groups() {
     local r
-    ACTIVE_GROUPS=()
-    for r in "${GROUPS_LIST[@]}"; do group_needs_work "$r" && ACTIVE_GROUPS+=("$r"); done
-    (( ${#ACTIVE_GROUPS[@]} > 0 ))
+    active_groups=()
+    for r in "${group_roots[@]}"; do group_needs_work "$r" && active_groups+=("$r"); done
+    (( ${#active_groups[@]} > 0 ))
 }
 
 # unbind_group_functions ROOT -- unbinds every driver from every function
 # (audio included) of ROOT's member GPUs, because the subtree is about to be
-# removed or the GPU resized in place; counts the unbinds in UNBOUND
-UNBOUND=0
+# removed or the GPU resized in place; counts the unbinds in unbound
+unbound=0
 unbind_group_functions() {
     local g f drv
-    for g in ${GROUP_MEMBERS[$1]}; do
-        for f in ${GPU_FUNCS[$g]}; do
+    local -n members=${group_members[$1]}
+    for g in "${members[@]}"; do
+        for f in ${gpu_funcs[$g]}; do
             [[ -L $(sysdev "$f")/driver ]] || continue
             drv=$(basename "$(readlink "$(sysdev "$f")/driver")")
             if sysfs_write "$SYSFS/bus/pci/drivers/$drv/unbind" "$f"; then
-                log_ok "  Unbound $drv from $f"; UNBOUND=$((UNBOUND + 1))
+                log_ok "  Unbound $drv from $f"; unbound=$((unbound + 1))
             else
                 log_warn "  Could not unbind $drv from $f"
             fi
@@ -737,9 +787,9 @@ unbind_group_functions() {
 # there) keeps its driver and its audio
 unbind_active_groups() {
     local r
-    UNBOUND=0
-    for r in "${ACTIVE_GROUPS[@]}"; do unbind_group_functions "$r"; done
-    (( UNBOUND > 0 )) && sleep "$BIND_SETTLE"
+    unbound=0
+    for r in "${active_groups[@]}"; do unbind_group_functions "$r"; done
+    (( unbound > 0 )) && sleep "$BIND_SETTLE"
     return 0
 }
 
@@ -758,7 +808,7 @@ remove_group() {
 # its subtree; never the global /sys/bus/pci/rescan, which would re-probe
 # every hot-pluggable device on the machine; returns the write's status
 rescan_group() {
-    local r=$1 f=${GROUP_RESCAN[$1]}
+    local r=$1 f=${group_rescan[$1]}
     if [[ ! -w $f ]]; then log_err "  $f is not writable; cannot re-enumerate $r"; return 1; fi
     log_info "  Rescanning $f"
     if ! sysfs_write "$f" 1; then log_err "  Rescan via $f failed"; return 1; fi
@@ -782,7 +832,7 @@ wait_for_gpus() {
     # A GPU that came back on a different BDF would look like "missing"; say so.
     local now=0 d
     for d in "$SYSFS"/bus/pci/devices/*; do [[ $(attr "$(basename "$d")" vendor) == 0x1002 && $(attr "$(basename "$d")" class) == 0x03* ]] && now=$((now + 1)); done
-    (( now != ${#GPUS[@]} )) || log_warn "  $now AMD GPUs are present under different addresses; re-run the script."
+    (( now != ${#gpus[@]} )) || log_warn "  $now AMD GPUs are present under different addresses; re-run the script."
     return 1
 }
 # reenumerate -- removes and rescans every active switched group and waits
@@ -790,17 +840,18 @@ wait_for_gpus() {
 # become this attempt's losers); returns 0 when every group came back
 reenumerate() {
     local r g rc=0 rescan=() expected=()
-    for r in "${ACTIVE_GROUPS[@]}"; do
+    for r in "${active_groups[@]}"; do
         [[ $r == none:* ]] && continue
         if remove_group "$r"; then rescan+=("$r"); else rc=1; fi
     done
     (( ${#rescan[@]} > 0 )) || return "$rc"
     sleep "$REMOVE_SETTLE"
     for r in "${rescan[@]}"; do
+        local -n members=${group_members[$r]}
         if rescan_group "$r"; then
-            for g in ${GROUP_MEMBERS[$r]}; do expected+=("$g"); done
+            expected+=("${members[@]}")
         else
-            rc=1; log_err "  GPUs of $r stay absent until the next boot: ${GROUP_MEMBERS[$r]}"
+            rc=1; log_err "  GPUs of $r stay absent until the next boot: ${members[*]}"
         fi
     done
     if (( ${#expected[@]} > 0 )); then wait_for_gpus "${expected[@]}" || rc=1; fi
@@ -813,11 +864,11 @@ reenumerate() {
 # failure there rolls back and aborts the attempt); returns 0 or 1
 apply_plan() {
     local g want have
-    for g in $(resizable_gpus); do
-        want=${PLAN[$g]}; have=$(read_size_index "$g")
+    while read -r g; do
+        want=${plan[$g]}; have=$(read_size_index "$g")
         if [[ $have == "$want" ]]; then
             log_info "  $g already at index $want ($(size_index_to_human "$want"))"
-        elif [[ -z ${GPU_ROOT[$g]} ]]; then
+        elif [[ -z ${gpu_root[$g]} ]]; then
             if resize_in_place "$g" "$want"; then
                 log_ok "  $g resized in place, index $have -> $want ($(size_index_to_human "$want"))"
             else
@@ -830,13 +881,13 @@ apply_plan() {
             rollback_dirty || log_err "  A GPU is left with a size the kernel has not seen; the driver load will be refused"
             return 1
         fi
-    done
+    done < <(resizable_gpus)
     return 0
 }
 
 # try_plan NAME -- unbinds, programs and re-enumerates the groups the plan
 # changes, then verifies every GPU's BARs; returns 0 when every memory BAR
-# is assigned at the planned size, 1 otherwise with the losers in LAST_LOSERS
+# is assigned at the planned size, 1 otherwise with the losers in last_losers
 try_plan() {
     local name=$1
     log_info "Applying plan '$name':$(describe_plan)"
@@ -844,69 +895,72 @@ try_plan() {
         log_ok "Plan '$name' is already in effect (BARs assigned at the requested sizes); no re-enumeration needed."
         return 0
     fi
-    log_info "  Groups to re-enumerate: ${ACTIVE_GROUPS[*]}"
+    log_info "  Groups to re-enumerate: ${active_groups[*]}"
     unbind_active_groups
     apply_plan || return 1
     log_info "  Re-enumerating GPU subtrees so the kernel re-sizes the bridge windows..."
     reenumerate || log_warn "  Re-enumeration incomplete; verifying what is there"
     log_info "  Resulting BAR assignment:"; report_bars
-    local bad g; bad=$(failed_gpus | tr '\n' ' ')
+    local g bad=()
+    while read -r g; do bad+=("$g"); done < <(failed_gpus)
     # A BAR that is assigned but not at the requested size means the ReBAR
     # write did not take or the subtree was not really re-enumerated.
-    for g in $(resizable_gpus); do
-        [[ " $bad " == *" $g "* ]] && continue
-        if (( $(bar0_bytes "$g") != (1 << (PLAN[$g] + 20)) )); then
-            log_warn "  $g BAR0 is $(human_bytes "$(bar0_bytes "$g")"), not the requested $(size_index_to_human "${PLAN[$g]}")"
-            bad+="$g "
+    while read -r g; do
+        in_list "$g" "${bad[@]}" && continue
+        if (( $(bar0_bytes "$g") != (1 << (plan[$g] + 20)) )); then
+            log_warn "  $g BAR0 is $(human_bytes "$(bar0_bytes "$g")"), not the requested $(size_index_to_human "${plan[$g]}")"
+            bad+=("$g")
         fi
-    done
-    if [[ -z ${bad// /} ]]; then
-        log_ok "Plan '$name' verified: all ${#GPUS[@]} GPUs have every memory BAR assigned."
+    done < <(resizable_gpus)
+    if (( ${#bad[@]} == 0 )); then
+        log_ok "Plan '$name' verified: all ${#gpus[@]} GPUs have every memory BAR assigned."
         return 0
     fi
-    log_warn "Plan '$name' rejected: unassigned BARs on: $bad"
-    LAST_LOSERS=$bad
+    log_warn "Plan '$name' rejected: unassigned BARs on: ${bad[*]}"
+    last_losers=("${bad[@]}")
     return 1
 }
 
 negotiate() {
     local round=1 g name
-    LAST_LOSERS=""
+    last_losers=()
     if (( $(resizable_gpus | wc -l) == 0 )); then
         log_info "No resizable GPU present; nothing to negotiate."
-        ACHIEVED_PLAN="none-needed"
+        achieved_plan="none-needed"
         [[ -z $(failed_gpus) ]]
         return
     fi
     case "$FORCE_PLAN" in
-        baseline) plan_baseline; try_plan baseline && { ACHIEVED_PLAN=baseline; return 0; }; ACHIEVED_PLAN=none; return 1 ;;
-        all-max)  plan_all_max;  try_plan all-max  && { ACHIEVED_PLAN=all-max;  return 0; }; ACHIEVED_PLAN=none; return 1 ;;
+        baseline) plan_baseline; try_plan baseline && { achieved_plan=baseline; return 0; }; achieved_plan=none; return 1 ;;
+        all-max)  plan_all_max;  try_plan all-max  && { achieved_plan=all-max;  return 0; }; achieved_plan=none; return 1 ;;
     esac
 
     plan_all_max
     name="all-max"
     while :; do
-        if try_plan "$name"; then ACHIEVED_PLAN=$name; return 0; fi
+        if try_plan "$name"; then achieved_plan=$name; return 0; fi
         if plan_is_baseline; then break; fi
         (( round >= MAX_ROUNDS )) && { log_warn "Giving up after $round rounds."; break; }
         # Demote the losers; if a loser is not resizable (or already at
         # baseline) demote everything in its group instead.
         local demoted=0 r m
-        for g in $LAST_LOSERS; do
-            if [[ -n ${GPU_REBAR_CTRL[$g]:-} && ${PLAN[$g]} != "${GPU_BASE_INDEX[$g]}" ]]; then
-                PLAN[$g]=${GPU_BASE_INDEX[$g]}; demoted=$((demoted + 1))
+        for g in "${last_losers[@]}"; do
+            if [[ -n ${gpu_rebar_ctrl[$g]:-} && ${plan[$g]} != "${gpu_base_index[$g]}" ]]; then
+                plan[$g]=${gpu_base_index[$g]}; demoted=$((demoted + 1))
             else
-                r=${GPU_ROOT[$g]:-}
-                for m in ${GROUP_MEMBERS[$r]:-}; do
-                    [[ -n ${GPU_REBAR_CTRL[$m]:-} && ${PLAN[$m]} != "${GPU_BASE_INDEX[$m]}" ]] || continue
-                    PLAN[$m]=${GPU_BASE_INDEX[$m]}; demoted=$((demoted + 1))
+                r=${gpu_root[$g]:-}
+                [[ -n ${group_members[$r]:-} ]] || continue
+                local -n members=${group_members[$r]}
+                for m in "${members[@]}"; do
+                    [[ -n ${gpu_rebar_ctrl[$m]:-} && ${plan[$m]} != "${gpu_base_index[$m]}" ]] || continue
+                    plan[$m]=${gpu_base_index[$m]}; demoted=$((demoted + 1))
                 done
             fi
         done
         if (( demoted == 0 )); then plan_baseline; name="baseline"; else round=$((round + 1)); name="demote-losers-$round"; plan_is_baseline && name="baseline"; fi
         log_info "Falling back: $name"
     done
-    ACHIEVED_PLAN="none"
+    achieved_plan="none"
     log_err "Every plan failed to produce a fully-assigned BAR layout."
     return 1
 }
@@ -918,16 +972,16 @@ negotiate() {
 # remembers that we did, so cleanup can undo it; returns the write's status
 set_override() {
     sysfs_write "$(sysdev "$1")/driver_override" "$2" || return 1
-    if [[ -n $2 ]]; then OVERRIDE_SET[$1]=1; else unset "OVERRIDE_SET[$1]" "OVERRIDE_KEEP[$1]"; fi
+    if [[ -n $2 ]]; then override_set[$1]=1; else unset "override_set[$1]" "override_keep[$1]"; fi
     return 0
 }
 # block_binding BDF -- fences the GPU off from every driver, on purpose and
 # for good (until the next boot or a manual clear); returns the write's status
-block_binding()   { set_override "$1" none && OVERRIDE_KEEP[$1]=1; }
+block_binding()   { set_override "$1" none && override_keep[$1]=1; }
 unblock_binding() { set_override "$1" ""; }
 clear_stale_overrides() {
     local g f
-    for g in "${GPUS[@]}"; do for f in ${GPU_FUNCS[$g]}; do present "$f" && unblock_binding "$f"; done; done
+    for g in "${gpus[@]}"; do for f in ${gpu_funcs[$g]}; do present "$f" && unblock_binding "$f"; done; done
     return 0
 }
 
@@ -937,25 +991,25 @@ clear_stale_overrides() {
 # reach its end or left a GPU dirty, logs one line per GPU with the state
 # it is in; safe to run twice; never exits, so the exit status is preserved
 cleanup() {
-    (( CLEANUP_DONE )) && return 0
-    CLEANUP_DONE=1
+    (( cleanup_done )) && return 0
+    cleanup_done=1
     local g f leftover=0
-    for f in "${!OVERRIDE_SET[@]}"; do
-        [[ -n ${OVERRIDE_KEEP[$f]:-} ]] && continue
+    for f in "${!override_set[@]}"; do
+        [[ -n ${override_keep[$f]:-} ]] && continue
         present "$f" || continue
         if unblock_binding "$f"; then log_info "cleanup: cleared driver_override on $f"
         else log_warn "cleanup: could not clear driver_override on $f"; fi
     done
-    for g in "${!GPU_DECODE_OFF[@]}"; do
+    for g in "${!gpu_decode_off[@]}"; do
         present "$g" || continue
         if restore_decode "$g"; then log_info "cleanup: re-enabled memory decode on $g"
         else log_warn "cleanup: could not re-enable memory decode on $g"; leftover=1; fi
     done
-    (( ${#GPU_DIRTY[@]} > 0 )) && leftover=1
-    if (( leftover || (TOUCHED && ! RUN_COMPLETE) )); then
-        for g in "${GPUS[@]}"; do
+    (( ${#gpu_dirty[@]} > 0 )) && leftover=1
+    if (( leftover || (touched && ! run_complete) )); then
+        for g in "${gpus[@]}"; do
             if ! present "$g"; then log_warn "state of $g: not present"; continue; fi
-            log_warn "state of $g: size index $(read_size_index "$g")$( [[ -n ${GPU_DIRTY[$g]:-} ]] && echo ' (written, not re-enumerated)'), BAR0 $(human_bytes "$(bar0_bytes "$g")"), driver_override '$(attr "$g" driver_override)', driver $(driver_of "$g")"
+            log_warn "state of $g: size index $(read_size_index "$g")$( [[ -n ${gpu_dirty[$g]:-} ]] && echo ' (written, not re-enumerated)'), BAR0 $(human_bytes "$(bar0_bytes "$g")"), driver_override '$(attr "$g" driver_override)', driver $(driver_of "$g")"
         done
     fi
     return 0
@@ -981,7 +1035,7 @@ wait_for_probe() {
     local deadline=$(( SECONDS + PROBE_WAIT )) g pending stable=0 last=-1 nodes
     while (( SECONDS < deadline )); do
         pending=0
-        for g in "${GPUS[@]}"; do
+        for g in "${gpus[@]}"; do
             [[ $(attr "$g" driver_override) == none ]] && continue
             [[ -L $(sysdev "$g")/driver ]] || pending=$((pending + 1))
         done
@@ -998,44 +1052,44 @@ wait_for_probe() {
 }
 
 guard_and_load_driver() {
-    local g bad blocked=0 dirty=""
-    bad=$(failed_gpus)
+    local g blocked=0 dirty="" bad=()
+    while read -r g; do bad+=("$g"); done < <(failed_gpus)
     # A GPU whose register was written this run but never re-enumerated
     # would be probed against a stale BAR assignment; only a fenced-off GPU
-    # (in $bad, blocked below) may be left that way.
-    for g in "${!GPU_DIRTY[@]}"; do
+    # (in bad, blocked below) may be left that way.
+    for g in "${!gpu_dirty[@]}"; do
         present "$g" || continue
-        [[ " ${bad//$'\n'/ } " == *" $g "* ]] || dirty+="$g "
+        in_list "$g" "${bad[@]}" || dirty+="$g "
     done
     if [[ -n $dirty ]]; then
         log_err "Size index written this run but not re-enumerated on: $dirty"
         log_err "The kernel's BAR assignment no longer matches the register; refusing to load $DRIVER. Reboot to recover."
         return 1
     fi
-    if [[ -n $bad ]]; then
+    if (( ${#bad[@]} > 0 )); then
         log_warn "Some GPUs still have an unassigned memory BAR. $DRIVER misdetects such a device as an SR-IOV virtual function"
         log_warn "and hangs forever in the mailbox handshake, so binding is being blocked on those devices."
-        for g in $bad; do
+        for g in "${bad[@]}"; do
             if block_binding "$g"; then
                 log_ok "  Blocked driver binding on $g (driver_override=none)"; blocked=$((blocked + 1))
             else
                 log_err "  COULD NOT block binding on $g; refusing to load $DRIVER."
                 log_err "  Loading it now would hang the boot. Reboot to recover."; return 1
             fi
-            if [[ -n ${GPU_REBAR_CTRL[$g]:-} ]]; then
-                if write_size_index "$g" "${GPU_BASE_INDEX[$g]}"; then
-                    log_info "  Reset $g size index to ${GPU_BASE_INDEX[$g]} for the next boot"
+            if [[ -n ${gpu_rebar_ctrl[$g]:-} ]]; then
+                if write_size_index "$g" "${gpu_base_index[$g]}"; then
+                    log_info "  Reset $g size index to ${gpu_base_index[$g]} for the next boot"
                 else
                     log_warn "  Could not reset the size index on $g"
                 fi
             fi
         done
     fi
-    GUARD_BLOCKED=$blocked
+    guard_blocked=$blocked
 
     if driver_loaded; then
         log_info "$DRIVER already loaded; re-binding the unguarded GPUs..."
-        for g in "${GPUS[@]}"; do
+        for g in "${gpus[@]}"; do
             [[ $(attr "$g" driver_override) == none ]] && continue
             [[ -L $(sysdev "$g")/driver ]] && continue
             sysfs_write "$SYSFS/bus/pci/drivers/$DRIVER/bind" "$g" || log_warn "  Could not bind $DRIVER to $g"
@@ -1091,7 +1145,7 @@ phase1_diagnose() {
     banner "Phase 1: Discovery and diagnostics"
     preflight
     discover_gpus
-    if (( ${#GPUS[@]} == 0 )); then
+    if (( ${#gpus[@]} == 0 )); then
         log_warn "No AMD GPU found on the PCI bus. Nothing to do."
         return 1
     fi
@@ -1100,16 +1154,16 @@ phase1_diagnose() {
 
 phase2_resize() {
     banner "Phase 2: BAR resize (plan negotiation)"
-    TOUCHED=1
+    touched=1
     log_info "Clearing stale driver_override values..."; clear_stale_overrides
     negotiate
 }
 
 phase3_verify() {
     banner "Phase 3: Verification"
-    local g large=0 baseline=0 driverless=0 missing=0 unassigned=0 total=${#GPUS[@]} drv b0 target vis
-    for g in "${GPUS[@]}"; do
-        log_info "GPU $g  ${GPU_NAME[$g]:-}"
+    local g large=0 baseline=0 driverless=0 missing=0 unassigned=0 total=${#gpus[@]} drv b0 target vis
+    for g in "${gpus[@]}"; do
+        log_info "GPU $g  ${gpu_name[$g]:-}"
         if ! present "$g"; then
             local waited=0
             while ! present "$g" && (( waited < REAPPEAR_WAIT )); do sleep 1; waited=$((waited + 1)); done
@@ -1121,10 +1175,10 @@ phase3_verify() {
         log_info "  BAR0: $(human_bytes "$b0")"
         if [[ -n $(bar_unassigned_list "$g") ]]; then
             log_err "  UNASSIGNED memory BAR(s): $(bar_unassigned_list "$g")"; unassigned=$((unassigned + 1))
-        elif [[ -n ${GPU_REBAR_CTRL[$g]:-} ]]; then
-            target=$(( 1 << (GPU_MAX_INDEX[$g] + 20) ))
-            if (( b0 >= target )); then log_ok "  BAR0 is at target ($(size_index_to_human "${GPU_MAX_INDEX[$g]}"))."; large=$((large + 1))
-            else log_info "  BAR0 below target $(size_index_to_human "${GPU_MAX_INDEX[$g]}")."; baseline=$((baseline + 1)); fi
+        elif [[ -n ${gpu_rebar_ctrl[$g]:-} ]]; then
+            target=$(( 1 << (gpu_max_index[$g] + 20) ))
+            if (( b0 >= target )); then log_ok "  BAR0 is at target ($(size_index_to_human "${gpu_max_index[$g]}"))."; large=$((large + 1))
+            else log_info "  BAR0 below target $(size_index_to_human "${gpu_max_index[$g]}")."; baseline=$((baseline + 1)); fi
         else
             log_info "  Not resizable; BAR0 as assigned by firmware."; large=$((large + 1))
         fi
@@ -1147,21 +1201,21 @@ phase3_verify() {
     log_info "  KFD topology nodes: $nodes (includes 1 CPU node)"
     # The hive id lives in a directory (xgmi_hive_info/xgmi_hive_id); GPUs
     # without a hive contribute an empty line that awk 'NF' drops.
-    local hives; hives=$(for g in "${GPUS[@]}"; do attr "$g" xgmi_hive_info/xgmi_hive_id; done | awk 'NF' | sort | uniq -c | awk '{printf "%sx%s ", $2, $1}')
+    local hives; hives=$(for g in "${gpus[@]}"; do attr "$g" xgmi_hive_info/xgmi_hive_id; done | awk 'NF' | sort | uniq -c | awk '{printf "%sx%s ", $2, $1}')
     [[ -n $hives ]] && log_info "  XGMI hives (id x members): $hives"
     log_info "Summary:"
-    log_info "  Plan achieved : ${ACHIEVED_PLAN}"
+    log_info "  Plan achieved : ${achieved_plan}"
     log_info "  Large BARs    : ${large} / ${total}"
     log_info "  Baseline BARs : ${baseline} / ${total}"
     log_info "  Driverless    : ${driverless} / ${total}"
     mkdir -p "$STATE_DIR"
     printf 'plan=%s gpus=%d large=%d baseline=%d driverless=%d unassigned=%d missing=%d kfd_nodes=%d kernel=%s\n' \
-        "$ACHIEVED_PLAN" "$total" "$large" "$baseline" "$driverless" "$unassigned" "$missing" "$nodes" "$(uname -r)" > "$STATE_DIR/summary" \
+        "$achieved_plan" "$total" "$large" "$baseline" "$driverless" "$unassigned" "$missing" "$nodes" "$(uname -r)" > "$STATE_DIR/summary" \
         || log_warn "Could not write $STATE_DIR/summary"
     (( driverless > 0 )) && log_warn "Some GPUs have no driver. See notes above."
     (( missing > 0 ))    && log_err "$missing GPU(s) were missing from sysfs at verification time."
-    VERIFY_DEGRADED=0
-    (( driverless > 0 || missing > 0 || unassigned > 0 )) && VERIFY_DEGRADED=1
+    verify_degraded=0
+    (( driverless > 0 || missing > 0 || unassigned > 0 )) && verify_degraded=1
     if (( large == total && driverless == 0 && missing == 0 && unassigned == 0 )); then
         log_ok "SUCCESS: all ${total} GPUs have their target BAR size and a driver."
     elif (( unassigned > 0 )); then
@@ -1173,19 +1227,19 @@ phase3_verify() {
 
 do_revert() {
     banner "Revert: every GPU back to baseline"
-    TOUCHED=1
+    touched=1
     clear_stale_overrides
     plan_baseline
-    if try_plan baseline; then ACHIEVED_PLAN=baseline; else ACHIEVED_PLAN=none; log_warn "Baseline re-enumeration incomplete."; fi
+    if try_plan baseline; then achieved_plan=baseline; else achieved_plan=none; log_warn "Baseline re-enumeration incomplete."; fi
     banner "Loading driver"
     guard_and_load_driver
 }
 
 print_status() {
     discover_gpus 2>/dev/null
-    local g out="gpus=${#GPUS[@]}"
-    for g in "${GPUS[@]}"; do
-        out+=" $g:bar0=$(human_bytes "$(bar0_bytes "$g")"),idx=${GPU_CUR_INDEX[$g]},max=${GPU_MAX_INDEX[$g]},drv=$(driver_of "$g"),root=${GPU_ROOT[$g]:-none}"
+    local g out="gpus=${#gpus[@]}"
+    for g in "${gpus[@]}"; do
+        out+=" $g:bar0=$(human_bytes "$(bar0_bytes "$g")"),idx=${gpu_cur_index[$g]},max=${gpu_max_index[$g]},drv=$(driver_of "$g"),root=${gpu_root[$g]:-none}"
     done
     [[ -r $STATE_DIR/summary ]] && out+=" last: $(cat "$STATE_DIR/summary")"
     echo "$out"
@@ -1281,7 +1335,7 @@ check_windows() {
 # one with -1, live-only fields marked) and appends it to CHECK_LOG for the
 # current boot; returns 1 on a bad argument or an unwritable log
 cmd_check() {
-    local b=0 j k kver btime plan large drvless success rejected traces sriov losers
+    local b=0 j k kver btime achieved large drvless success rejected traces sriov losers
     local status bar0 wins kfd hives verdict line
     case ${1:-} in
         "") ;;
@@ -1291,7 +1345,7 @@ cmd_check() {
     j=$(check_journal "$b"); k=$(check_kernel_log "$b")
     kver=$(head -1 <<<"$k" | sed -E 's/^Linux version ([^ ]+).*/\1/')
     btime=$(journalctl -b "$b" --no-pager -o short-iso 2>/dev/null | head -1 | cut -c1-19)
-    plan=$(sed -n 's/.*Plan achieved *: *//p' <<<"$j" | tail -1)
+    achieved=$(sed -n 's/.*Plan achieved *: *//p' <<<"$j" | tail -1)
     large=$(sed -n 's/.*Large BARs *: *//p' <<<"$j" | tail -1 | tr -d ' ')
     drvless=$(sed -n 's/.*Driverless *: *//p' <<<"$j" | tail -1 | tr -d ' ')
     success=$(grep -c 'SUCCESS:' <<<"$j")
@@ -1307,14 +1361,14 @@ cmd_check() {
     else
         bar0="(live only)"; wins="(live only)"; kfd="(live only)"; hives="(live only)"
     fi
-    case "$plan:$success" in
+    case "$achieved:$success" in
         all-max:1)     verdict="WORKS" ;;
         none:*)        verdict="FAILS (bind guard held)" ;;
         none-needed:*) verdict="NO RESIZABLE GPU" ;;
         *)             verdict="OTHER - inspect" ;;
     esac
     (( traces > 0 || sriov > 0 )) && verdict="$verdict + TRACE/SRIOV NOISE - inspect"
-    line="$btime  $kver  verdict=$verdict  plan=${plan:-?}  large=${large:-?}  driverless=${drvless:-?}  windows=$wins  bar0=${bar0:-?}  kfd=$kfd  xgmi_hives=$hives  traces=$traces  rejected=$rejected  $losers"
+    line="$btime  $kver  verdict=$verdict  plan=${achieved:-?}  large=${large:-?}  driverless=${drvless:-?}  windows=$wins  bar0=${bar0:-?}  kfd=$kfd  xgmi_hives=$hives  traces=$traces  rejected=$rejected  $losers"
     echo "$line"
     (( b == 0 )) || return 0
     if mkdir -p "$(dirname "$CHECK_LOG")" 2>/dev/null && echo "$line" >> "$CHECK_LOG" 2>/dev/null; then
@@ -1327,7 +1381,7 @@ cmd_check() {
 # run_exit_status -- prints the exit status of a completed run: 0 full
 # success, 2 degraded (a GPU fenced off, driverless or missing)
 run_exit_status() {
-    if (( GUARD_BLOCKED > 0 || VERIFY_DEGRADED )); then echo 2; else echo 0; fi
+    if (( guard_blocked > 0 || verify_degraded )); then echo 2; else echo 0; fi
 }
 
 # main ARGS -- parses the command line and runs one subcommand; returns the
@@ -1346,8 +1400,8 @@ main() {
         esac
     done
     install_traps
-    case $cmd in resize|revert) RECORD_BARS=1 ;; esac
-    if [[ $cmd == status ]]; then print_status; RUN_COMPLETE=1; return 0; fi
+    case $cmd in resize|revert) record_bars=1 ;; esac
+    if [[ $cmd == status ]]; then print_status; run_complete=1; return 0; fi
 
     log_info "resize-amdgpu-bars $VERSION: discovery, plan negotiation, bind guard, bounded driver load"
     # One instance at a time; a manual run under the boot-time service would
@@ -1356,22 +1410,22 @@ main() {
     if ! exec 9>"$LOCK_FILE"; then log_err "Cannot open $LOCK_FILE"; return 1; fi
     if ! flock -n 9; then log_err "Another instance holds $LOCK_FILE. Watch it: journalctl -u $SERVICE_NAME -b -f"; return 1; fi
 
-    phase1_diagnose || { RUN_COMPLETE=1; return 0; }
+    phase1_diagnose || { run_complete=1; return 0; }
 
     local rc=0
     case $cmd in
-        diagnose) log_info "Diagnostics complete. No changes made."; RUN_COMPLETE=1; return 0 ;;
+        diagnose) log_info "Diagnostics complete. No changes made."; run_complete=1; return 0 ;;
         dry-run)
             log_info "Plans that would be tried:"
             plan_all_max;  log_info "  all-max:$(describe_plan)"
             log_info "  then: demote whichever GPUs lose their BAR, round by round"
             plan_baseline; log_info "  baseline:$(describe_plan)"
-            log_info "Dry run complete. No changes made."; RUN_COMPLETE=1; return 0 ;;
+            log_info "Dry run complete. No changes made."; run_complete=1; return 0 ;;
         revert)
             do_revert || rc=1
             phase3_verify
             (( rc == 0 )) || { log_err "Driver load did not complete cleanly. See messages above."; return 1; }
-            RUN_COMPLETE=1
+            run_complete=1
             return "$(run_exit_status)" ;;
     esac
 
@@ -1384,7 +1438,7 @@ main() {
             log_err "$SERVICE_NAME is still running. Watch it: journalctl -u $SERVICE_NAME -b -f"; return 1
         fi
         read -rp "Proceed? (y/N): " confirm
-        [[ ${confirm,,} == y ]] || { log_info "Aborted."; RUN_COMPLETE=1; return 0; }
+        [[ ${confirm,,} == y ]] || { log_info "Aborted."; run_complete=1; return 0; }
     fi
 
     phase2_resize || log_warn "No plan produced a clean layout; continuing with the bind guard."
@@ -1394,7 +1448,7 @@ main() {
 
     phase3_verify
     (( rc == 0 )) || { log_err "Driver load did not complete cleanly. See messages above."; return 1; }
-    RUN_COMPLETE=1
+    run_complete=1
     if have_tool rocminfo || have_tool rocm-smi; then
         log_info "Done. Verify with: rocminfo / rocm-smi"
     else

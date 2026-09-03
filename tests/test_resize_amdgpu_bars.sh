@@ -10,6 +10,11 @@
 # like a size-limited window. Nothing real is touched.
 #
 #   ./test_resize_amdgpu_bars.sh path/to/resize-amdgpu-bars
+#
+# shellcheck disable=SC2154,SC2034  # the script's globals and knobs are
+#                                   # defined by the sourced script and set
+#                                   # here to steer it; shellcheck sees only
+#                                   # one side of that
 set -uo pipefail
 SCRIPT=${1:?usage: $0 path/to/resize-amdgpu-bars}
 [[ -r $SCRIPT ]] || { echo "$0: cannot read $SCRIPT" >&2; exit 2; }
@@ -188,12 +193,12 @@ modprobe() {
     MODPROBE_CALLS=$((MODPROBE_CALLS + 1))
     (( MODPROBE_RC )) && return "$MODPROBE_RC"
     mkdir -p "$SYSFS/module/amdgpu"
-    for g in "${GPUS[@]}"; do
+    for g in "${gpus[@]}"; do
         [[ -e ${DEVPATH[$g]} && $(cat "${DEVPATH[$g]}/driver_override") != none ]] || continue
         ln -sfn "$SYSFS/bus/pci/drivers/amdgpu" "${DEVPATH[$g]}/driver"
     done
 }
-unload_driver() { local g; rm -rf "$SYSFS/module/amdgpu"; for g in "${GPUS[@]}"; do rm -f "${DEVPATH[$g]}/driver"; done; }
+unload_driver() { local g; rm -rf "$SYSFS/module/amdgpu"; for g in "${gpus[@]}"; do rm -f "${DEVPATH[$g]}/driver"; done; }
 export -f lspci setpci timeout modprobe 2>/dev/null
 
 # ---------------------------------------------------------------------------
@@ -216,12 +221,13 @@ reenumerate() { REENUM_CALLS=$((REENUM_CALLS + 1)); orig_reenumerate; }
 remove_group() { mark_group_reenumerated "$1"; return 0; }
 rescan_group() {
     local r=$1 g i sum=0 n=0
+    local -n members=${group_members[$r]}
     [[ " $RESCAN_FAIL_GROUPS " == *" $r "* ]] && return 1
-    for g in ${GROUP_MEMBERS[$r]}; do
+    for g in "${members[@]}"; do
         i=$(read_size_index "$g"); (( i < 0 )) && i=8
         sum=$(( sum + (1 << (i + 20)) ))
     done
-    for g in ${GROUP_MEMBERS[$r]}; do
+    for g in "${members[@]}"; do
         i=$(read_size_index "$g"); (( i < 0 )) && i=8
         n=$((n + 1))
         case $RULE in
@@ -254,29 +260,30 @@ sysfs_write() {
 bind_all() {   # every GPU function gets a driver link (amdgpu / snd_hda_intel)
     local g f
     mkdir -p "$SYSFS/bus/pci/drivers/snd_hda_intel"
-    for g in "${GPUS[@]}"; do
-        for f in ${GPU_FUNCS[$g]}; do
+    for g in "${gpus[@]}"; do
+        for f in ${gpu_funcs[$g]}; do
             if [[ $f == "$g" ]]; then ln -sfn "$SYSFS/bus/pci/drivers/amdgpu" "${DEVPATH[$f]}/driver"
             else ln -sfn "$SYSFS/bus/pci/drivers/snd_hda_intel" "${DEVPATH[$f]}/driver"; fi
         done
     done
 }
 bound() { [[ -L ${DEVPATH[$1]}/driver ]] && basename "$(readlink "${DEVPATH[$1]}/driver")" || echo none; }
+members_of() { local -n m=${group_members[$1]}; echo "${m[*]}"; }   # a group's GPUs, space-joined
 
 mkdir -p "$STATE_DIR"
 echo "sourced state"
 # Every map must be usable before anything assigned to it: under set -u a
 # "declare -A X" without "=()" is an unbound variable (the EXIT trap of a
 # bare "diagnose" run died on exactly that).
-assert_eq "maps usable while empty under set -u" "$( ( echo "${#GPU_DIRTY[@]}${#GPU_DIRTY_FROM[@]}${#GPU_DECODE_OFF[@]}${#OVERRIDE_SET[@]}${#OVERRIDE_KEEP[@]}${#PLAN[@]}${#GPU_ROOT[@]} ${!GPU_DIRTY[@]} ${!OVERRIDE_SET[@]}" ) 2>&1 )" "0000000  "
-assert_eq "cleanup runs on a pristine state" "$( ( TOUCHED=0; cleanup; echo rc=$? ) 2>&1 )" "rc=0"
+assert_eq "maps usable while empty under set -u" "$( ( echo "${#gpu_dirty[@]}${#gpu_dirty_from[@]}${#gpu_decode_off[@]}${#override_set[@]}${#override_keep[@]}${#plan[@]}${#gpu_root[@]} ${!gpu_dirty[*]} ${!override_set[*]}" ) 2>&1 )" "0000000  "
+assert_eq "cleanup runs on a pristine state" "$( ( touched=0; cleanup; echo rc=$? ) 2>&1 )" "rc=0"
 # reset_regs: every register back at index 8 with the BARs assigned there and
 # nothing dirty, the state a fresh boot on this firmware starts from.
 reset_regs() {
     local g
-    for g in "${GPUS[@]}"; do [[ -n ${GPU_REBAR_CTRL[$g]} ]] && write_size_index "$g" 8 >/dev/null; done
-    for g in "${GPUS[@]}"; do set_bars "$g" 8 assigned; done
-    GPU_DIRTY=(); GPU_DIRTY_FROM=()
+    for g in "${gpus[@]}"; do [[ -n ${gpu_rebar_ctrl[$g]} ]] && write_size_index "$g" 8 >/dev/null; done
+    for g in "${gpus[@]}"; do set_bars "$g" 8 assigned; done
+    gpu_dirty=(); gpu_dirty_from=()
 }
 # No real waiting in the fake kernel.
 REMOVE_SETTLE=0; BIND_SETTLE=0; RESCAN_POLL=0; PROBE_POLL=0
@@ -285,33 +292,35 @@ log_info() { :; }; log_ok() { :; }; log_warn() { :; }; log_err() { :; }   # quie
 echo "discovery"
 out=$( log_info() { echo "$*"; }; discover_gpus 2>&1 )
 discover_gpus
-assert_eq "gpu count" "${#GPUS[@]}" 8
+assert_eq "gpu count" "${#gpus[@]}" 8
 assert_eq "radeon card refused" "$(grep -c '0000:71:00.0 .*not an amdgpu device, skipped' <<<"$out")" 1
-assert_eq "radeon card never in GPUS" "$(printf '%s\n' "${GPUS[@]}" | grep -c 0000:71:00.0)" 0
+assert_eq "radeon card never in gpus" "$(printf '%s\n' "${gpus[@]}" | grep -c 0000:71:00.0)" 0
 assert_eq "radeon card is not ours" "$(is_gpu_function 0000:71:00.0 && echo yes || echo no)" no
-assert_eq "alias table loaded" "${#DRIVER_ALIASES[@]}" 2
+assert_eq "alias table loaded" "${#driver_aliases[@]}" 2
 assert_eq "match: Vega II" "$(match_modalias 'pci:v00001002d000066A3sv*sd*bc*sc*i*' pci:v00001002d000066A3sv0000106Bsd00000203bc03sc00i00 && echo yes || echo no)" yes
 assert_eq "match: class catch-all" "$(match_modalias 'pci:v00001002d*sv*sd*bc03sc00i00*' pci:v00001002d000066A3sv0000106Bsd00000203bc03sc00i00 && echo yes || echo no)" yes
 assert_eq "no match: other device id" "$(match_modalias 'pci:v00001002d000066A3sv*sd*bc*sc*i*' pci:v00001002d00006779sv0000106Bsd00000203bc03sc00i00 && echo yes || echo no)" no
 assert_eq "no match: other class" "$(match_modalias 'pci:v00001002d*sv*sd*bc03sc00i00*' pci:v00001002d000066A3sv0000106Bsd00000203bc04sc03i00 && echo yes || echo no)" no
-out=$( ALIAS_FILE=/dev/null; log_warn() { echo "$*"; }; discover_gpus 2>&1; echo "gpus=${#GPUS[@]}" )
+out=$( ALIAS_FILE=/dev/null; log_warn() { echo "$*"; }; discover_gpus 2>&1; echo "gpus=${#gpus[@]}" )
 assert_eq "no alias table: warns and accepts every AMD display device" "$(grep -c 'No PCI alias table' <<<"$out"):$(grep -o 'gpus=[0-9]*' <<<"$out")" "1:gpus=9"
-assert_eq "group count" "${#GROUPS_LIST[@]}" 6
-assert_eq "root-bus GPU has no removable root" "${GPU_ROOT[0000:60:00.0]}|${GROUP_MEMBERS[none:0000:60:00.0]}|${GROUP_RESCAN[none:0000:60:00.0]}" "|0000:60:00.0|"
-assert_eq "root of 0e:00.0" "${GPU_ROOT[0000:0e:00.0]}" "0000:06:00.0"
-assert_eq "root of 1b:00.0" "${GPU_ROOT[0000:1b:00.0]}" "0000:16:00.0"
-assert_eq "root of single card" "${GPU_ROOT[0000:2b:00.0]}" "0000:2a:00.0"
-assert_eq "root of impure card stops below the NVMe" "${GPU_ROOT[0000:53:00.0]}" "0000:52:00.0"
-assert_eq "impure flag" "${GPU_ROOT_IMPURE[0000:53:00.0]}" 1
-assert_eq "group 06 members" "${GROUP_MEMBERS[0000:06:00.0]}" "0000:0b:00.0 0000:0e:00.0"
-assert_eq "rescan target for a root port" "${GROUP_RESCAN[0000:06:00.0]}" "$SYSFS/devices/pci0000:06/pci_bus/0000:06/rescan"
-assert_eq "rescan target below a switch" "${GROUP_RESCAN[0000:52:00.0]}" "$SYSFS/bus/pci/devices/0000:51:00.0/rescan"
-assert_eq "functions incl. audio" "${GPU_FUNCS[0000:0b:00.0]}" "0000:0b:00.0 0000:0b:00.1"
-assert_eq "rebar ctrl offset" "${GPU_REBAR_CTRL[0000:0b:00.0]}" "208"
-assert_eq "max index Vega" "${GPU_MAX_INDEX[0000:0b:00.0]}" 15
-assert_eq "max index W5500X-like" "${GPU_MAX_INDEX[0000:2b:00.0]}" 13
-assert_eq "baseline index" "${GPU_BASE_INDEX[0000:0b:00.0]}" 8
-assert_eq "no-rebar GPU has no ctrl" "${GPU_REBAR_CTRL[0000:3b:00.0]}" ""
+assert_eq "group count" "${#group_roots[@]}" 6
+assert_eq "root-bus GPU has no removable root" "${gpu_root[0000:60:00.0]}|$(members_of none:0000:60:00.0)|${group_rescan[none:0000:60:00.0]}" "|0000:60:00.0|"
+assert_eq "root of 0e:00.0" "${gpu_root[0000:0e:00.0]}" "0000:06:00.0"
+assert_eq "root of 1b:00.0" "${gpu_root[0000:1b:00.0]}" "0000:16:00.0"
+assert_eq "root of single card" "${gpu_root[0000:2b:00.0]}" "0000:2a:00.0"
+assert_eq "root of impure card stops below the NVMe" "${gpu_root[0000:53:00.0]}" "0000:52:00.0"
+assert_eq "impure flag" "${gpu_root_impure[0000:53:00.0]}" 1
+assert_eq "group 06 members" "$(members_of 0000:06:00.0)" "0000:0b:00.0 0000:0e:00.0"
+assert_eq "group 06 chain: every bridge between the root and its dies, sorted" "$(declare -n c=${group_chain[0000:06:00.0]}; echo "${c[*]}")" "0000:06:00.0 0000:07:00.0 0000:08:08.0 0000:08:10.0 0000:09:00.0 0000:0a:00.0 0000:0c:00.0 0000:0d:00.0"
+assert_eq "root-bus group has an empty chain" "$(declare -n c=${group_chain[none:0000:60:00.0]}; echo "${#c[@]}")" 0
+assert_eq "rescan target for a root port" "${group_rescan[0000:06:00.0]}" "$SYSFS/devices/pci0000:06/pci_bus/0000:06/rescan"
+assert_eq "rescan target below a switch" "${group_rescan[0000:52:00.0]}" "$SYSFS/bus/pci/devices/0000:51:00.0/rescan"
+assert_eq "functions incl. audio" "${gpu_funcs[0000:0b:00.0]}" "0000:0b:00.0 0000:0b:00.1"
+assert_eq "rebar ctrl offset" "${gpu_rebar_ctrl[0000:0b:00.0]}" "208"
+assert_eq "max index Vega" "${gpu_max_index[0000:0b:00.0]}" 15
+assert_eq "max index W5500X-like" "${gpu_max_index[0000:2b:00.0]}" 13
+assert_eq "baseline index" "${gpu_base_index[0000:0b:00.0]}" 8
+assert_eq "no-rebar GPU has no ctrl" "${gpu_rebar_ctrl[0000:3b:00.0]}" ""
 assert_eq "resizable count" "$(resizable_gpus | wc -l)" 7
 assert_eq "mellanox is not ours" "$(is_gpu_function 0000:41:00.2 && echo yes || echo no)" no
 assert_eq "audio is ours" "$(is_gpu_function 0000:0e:00.1 && echo yes || echo no)" yes
@@ -322,20 +331,20 @@ echo "baseline: observed at first discovery, kept for the boot"
 assert_eq "baseline recorded in STATE_DIR" "$(cat "$STATE_DIR/baseline-0000:0b:00.0")" 8
 printf '0x0000000000000f00\n' > "$REG/0000:0b:00.0.0x208.l"       # a previous run left index 15
 discover_gpus
-assert_eq "later run: current index 15" "${GPU_CUR_INDEX[0000:0b:00.0]}" 15
-assert_eq "later run: baseline still 8" "${GPU_BASE_INDEX[0000:0b:00.0]}" 8
+assert_eq "later run: current index 15" "${gpu_cur_index[0000:0b:00.0]}" 15
+assert_eq "later run: baseline still 8" "${gpu_base_index[0000:0b:00.0]}" 8
 rm -f "$STATE_DIR"/baseline-*                                        # a fresh boot whose firmware already enabled ReBAR
 discover_gpus
-assert_eq "firmware at 15: baseline 15, not the lowest supported 8" "${GPU_BASE_INDEX[0000:0b:00.0]}" 15
-RULE=70vanilla; ACHIEVED_PLAN=none
+assert_eq "firmware at 15: baseline 15, not the lowest supported 8" "${gpu_base_index[0000:0b:00.0]}" 15
+RULE=70vanilla; achieved_plan=none
 negotiate 2>/dev/null
 assert_eq "fallback never wrote 8 on the firmware-15 die" "$(read_size_index 0000:0b:00.0)" 15
-assert_eq "fallback plan keeps it at 15" "${PLAN[0000:0b:00.0]}" 15
-assert_eq "its sibling still falls back to its own baseline" "${PLAN[0000:0e:00.0]}" 8
+assert_eq "fallback plan keeps it at 15" "${plan[0000:0b:00.0]}" 15
+assert_eq "its sibling still falls back to its own baseline" "${plan[0000:0e:00.0]}" 8
 rm -f "$STATE_DIR"/baseline-*; RULE=6x
 reset_regs
 discover_gpus
-assert_eq "restored: baseline 8" "${GPU_BASE_INDEX[0000:0b:00.0]}" 8
+assert_eq "restored: baseline 8" "${gpu_base_index[0000:0b:00.0]}" 8
 
 echo "units"
 assert_eq "index 15 is 32GiB" "$(size_index_to_human 15)" 32GiB
@@ -348,23 +357,23 @@ write_size_index 0000:0b:00.0 15 && ok "write index 15" || fail "write index 15"
 assert_eq "readback" "$(read_size_index 0000:0b:00.0)" 15
 assert_eq "memory decode disabled during write" "$(cat "$REG/0000:0b:00.0.cmd_at_write")" "0x0405"
 assert_eq "memory decode re-enabled after the write" "$(cat "$REG/0000:0b:00.0.COMMAND")" "0x0407"
-assert_eq "written GPU is dirty until re-enumerated" "${GPU_DIRTY[0000:0b:00.0]:-}:${GPU_DIRTY_FROM[0000:0b:00.0]:-}" "1:8"
+assert_eq "written GPU is dirty until re-enumerated" "${gpu_dirty[0000:0b:00.0]:-}:${gpu_dirty_from[0000:0b:00.0]:-}" "1:8"
 write_size_index 0000:0b:00.0 8 >/dev/null
-assert_eq "writing the old index back makes it clean again" "${GPU_DIRTY[0000:0b:00.0]:-}" ""
+assert_eq "writing the old index back makes it clean again" "${gpu_dirty[0000:0b:00.0]:-}" ""
 printf '0x0405\n' > "$REG/0000:0b:00.0.COMMAND"
 write_size_index 0000:0b:00.0 15 >/dev/null; write_size_index 0000:0b:00.0 8 >/dev/null
 assert_eq "decode left off when it was off before" "$(cat "$REG/0000:0b:00.0.COMMAND")" "0x0405"
 printf '0x0407\n' > "$REG/0000:0b:00.0.COMMAND"
 
 echo "apply_plan partial failure: rollback, decode, no driver load"
-GPU_DIRTY=(); GPU_DIRTY_FROM=(); REENUM_CALLS=0; MODPROBE_CALLS=0
+gpu_dirty=(); gpu_dirty_from=(); REENUM_CALLS=0; MODPROBE_CALLS=0
 plan_all_max
 SETPCI_FAIL_WRITES="0000:0e:00.0"
 try_plan all-max 2>/dev/null; rc=$?
 assert_eq "plan fails" "$rc" 1
 assert_eq "first die rolled back to 8" "$(read_size_index 0000:0b:00.0)" 8
 assert_eq "failed die untouched" "$(read_size_index 0000:0e:00.0)" 8
-assert_eq "nothing dirty after rollback" "${#GPU_DIRTY[@]}" 0
+assert_eq "nothing dirty after rollback" "${#gpu_dirty[@]}" 0
 assert_eq "decode restored on the rolled-back die" "$(cat "$REG/0000:0b:00.0.COMMAND")" 0x0407
 assert_eq "decode restored on the failed die" "$(cat "$REG/0000:0e:00.0.COMMAND")" 0x0407
 assert_eq "no re-enumeration attempted" "$REENUM_CALLS" 0
@@ -375,69 +384,69 @@ SETPCI_FAIL_WRITES=""; SETPCI_FAIL_AFTER=$SETPCI_CTRL_WRITES; SETPCI_FAIL_AFTER=
 try_plan all-max 2>/dev/null; rc=$?
 assert_eq "plan fails and rollback fails" "$rc" 1
 assert_eq "first die left at 15" "$(read_size_index 0000:0b:00.0)" 15
-assert_eq "first die dirty" "${GPU_DIRTY[0000:0b:00.0]:-}" 1
+assert_eq "first die dirty" "${gpu_dirty[0000:0b:00.0]:-}" 1
 assert_eq "decode still restored on the dirty die" "$(cat "$REG/0000:0b:00.0.COMMAND")" 0x0407
 out=$( log_err() { echo "$*"; }; guard_and_load_driver 2>&1 ); rc=$?
 assert_eq "guard refuses to load while a GPU is dirty" "$rc:$MODPROBE_CALLS" "1:0"
 assert_eq "guard says why" "$(grep -c 'not re-enumerated on: 0000:0b:00.0' <<<"$out")" 1
 SETPCI_FAIL_AFTER=-1
 rollback_dirty 2>/dev/null && ok "rollback succeeds once setpci works" || fail "rollback"
-assert_eq "register restored" "$(read_size_index 0000:0b:00.0):${#GPU_DIRTY[@]}" "8:0"
+assert_eq "register restored" "$(read_size_index 0000:0b:00.0):${#gpu_dirty[@]}" "8:0"
 
 echo "negotiation: 6.x-like kernel"
-RULE=6x; REENUM_CALLS=0; ACHIEVED_PLAN=none
+RULE=6x; REENUM_CALLS=0; achieved_plan=none
 negotiate 2>/dev/null; rc=$?
 assert_eq "rc" "$rc" 0
-assert_eq "plan" "$ACHIEVED_PLAN" all-max
+assert_eq "plan" "$achieved_plan" all-max
 assert_eq "one re-enumeration" "$REENUM_CALLS" 1
 assert_eq "Vega at 32G" "$(bar0_bytes 0000:0b:00.0)" $(( 32 << 30 ))
 assert_eq "W5500X at 8G" "$(bar0_bytes 0000:2b:00.0)" $(( 8 << 30 ))
 assert_eq "no failures" "$(failed_gpus | wc -l)" 0
 
 echo "negotiation: fast path when already satisfied"
-REENUM_CALLS=0; negotiate 2>/dev/null; assert_eq "no re-enumeration needed" "$REENUM_CALLS" 0; assert_eq "plan" "$ACHIEVED_PLAN" all-max
+REENUM_CALLS=0; negotiate 2>/dev/null; assert_eq "no re-enumeration needed" "$REENUM_CALLS" 0; assert_eq "plan" "$achieved_plan" all-max
 
 echo "negotiation: unpatched-7.0-like kernel"
 reset_regs
-RULE=70vanilla; REENUM_CALLS=0; ACHIEVED_PLAN=none
+RULE=70vanilla; REENUM_CALLS=0; achieved_plan=none
 negotiate 2>/dev/null; rc=$?
 assert_eq "rc" "$rc" 1
-assert_eq "plan" "$ACHIEVED_PLAN" none
+assert_eq "plan" "$achieved_plan" none
 assert_eq "losers are the second dies" "$(failed_gpus | tr '\n' ' ')" "0000:0e:00.0 0000:1e:00.0 "
 assert_eq "rounds tried: all-max, demote losers, demote their groups, baseline" "$REENUM_CALLS" 4
-assert_eq "first dies were demoted to baseline in the end" "${PLAN[0000:0b:00.0]}" 8
+assert_eq "first dies were demoted to baseline in the end" "${plan[0000:0b:00.0]}" 8
 
 echo "negotiation: size-limited window (demote-losers succeeds)"
 reset_regs
-RULE=budget; REENUM_CALLS=0; ACHIEVED_PLAN=none
+RULE=budget; REENUM_CALLS=0; achieved_plan=none
 negotiate 2>/dev/null; rc=$?
 assert_eq "rc" "$rc" 0
-assert_eq "plan" "$ACHIEVED_PLAN" demote-losers-2
+assert_eq "plan" "$achieved_plan" demote-losers-2
 assert_eq "two rounds" "$REENUM_CALLS" 2
-assert_eq "first die large" "${PLAN[0000:0b:00.0]}" 15
-assert_eq "second die baseline" "${PLAN[0000:0e:00.0]}" 8
-assert_eq "single card untouched by the demotion" "${PLAN[0000:2b:00.0]}" 13
+assert_eq "first die large" "${plan[0000:0b:00.0]}" 15
+assert_eq "second die baseline" "${plan[0000:0e:00.0]}" 8
+assert_eq "single card untouched by the demotion" "${plan[0000:2b:00.0]}" 13
 assert_eq "no failures" "$(failed_gpus | wc -l)" 0
 
 echo "re-enumeration is group-local and return-checked"
 assert_eq "no global rescan anywhere in the code" "$(grep -v '^[[:space:]]*#' "$SCRIPT" | grep -c 'bus/pci/rescan')" 0
-GROUP_RESCAN[0000:16:00.0]=$T/nonexistent/rescan
+group_rescan[0000:16:00.0]=$T/nonexistent/rescan
 orig_rescan_group 0000:16:00.0 2>/dev/null; assert_eq "missing rescan file is a failure" "$?" 1
-GROUP_RESCAN[0000:16:00.0]=$T
+group_rescan[0000:16:00.0]=$T
 orig_rescan_group 0000:16:00.0 2>/dev/null; assert_eq "failed write (a directory) is a failure" "$?" 1
-GROUP_RESCAN[0000:16:00.0]=$SYSFS/devices/pci0000:16/pci_bus/0000:16/rescan
+group_rescan[0000:16:00.0]=$SYSFS/devices/pci0000:16/pci_bus/0000:16/rescan
 orig_rescan_group 0000:16:00.0 2>/dev/null; assert_eq "writable rescan file succeeds" "$?:$(cat "$SYSFS/devices/pci0000:16/pci_bus/0000:16/rescan")" "0:1"
 reset_regs; plan_all_max; RULE=6x; RESCAN_FAIL_GROUPS="0000:16:00.0"
 try_plan all-max 2>/dev/null; rc=$?
 assert_eq "a group whose rescan fails rejects the plan" "$rc" 1
-assert_eq "its GPUs are the losers" "$LAST_LOSERS" "0000:1b:00.0 0000:1e:00.0 "
+assert_eq "its GPUs are the losers" "${last_losers[*]}" "0000:1b:00.0 0000:1e:00.0"
 assert_eq "the other group was re-enumerated normally" "$(bar0_bytes 0000:0b:00.0)" $(( 32 << 30 ))
 RESCAN_FAIL_GROUPS=""; reset_regs
 
 echo "only GPUs with a size change, and their group members, are unbound"
-bind_all; RULE=6x; ACHIEVED_PLAN=none
+bind_all; RULE=6x; achieved_plan=none
 negotiate 2>/dev/null
-assert_eq "plan" "$ACHIEVED_PLAN" all-max
+assert_eq "plan" "$achieved_plan" all-max
 assert_eq "resized die unbound" "$(bound 0000:0b:00.0)" none
 assert_eq "its audio function unbound" "$(bound 0000:0b:00.1)" none
 assert_eq "GPU without ReBAR keeps amdgpu" "$(bound 0000:3b:00.0)" amdgpu
@@ -445,12 +454,12 @@ bind_all; REENUM_CALLS=0
 negotiate 2>/dev/null
 assert_eq "already in effect: nothing re-enumerated" "$REENUM_CALLS" 0
 assert_eq "already in effect: nothing unbound" "$(bound 0000:0b:00.0),$(bound 0000:0b:00.1),$(bound 0000:2b:00.0)" "amdgpu,snd_hda_intel,amdgpu"
-write_size_index 0000:2b:00.0 8 >/dev/null; set_bars 0000:2b:00.0 8 assigned; GPU_DIRTY=(); GPU_DIRTY_FROM=()
+write_size_index 0000:2b:00.0 8 >/dev/null; set_bars 0000:2b:00.0 8 assigned; gpu_dirty=(); gpu_dirty_from=()
 negotiate 2>/dev/null
 assert_eq "one card changed: only its group unbound" "$(bound 0000:2b:00.0),$(bound 0000:2b:00.1),$(bound 0000:0b:00.0),$(bound 0000:0e:00.0),$(bound 0000:3b:00.0)" "none,none,amdgpu,amdgpu,amdgpu"
-assert_eq "one card changed: only its group re-enumerated" "${ACTIVE_GROUPS[*]}" "0000:2a:00.0"
+assert_eq "one card changed: only its group re-enumerated" "${active_groups[*]}" "0000:2a:00.0"
 assert_eq "one card changed: back at 8GiB" "$(bar0_bytes 0000:2b:00.0)" $(( 8 << 30 ))
-unload_driver; for g in "${GPUS[@]}"; do for f in ${GPU_FUNCS[$g]}; do rm -f "${DEVPATH[$f]}/driver"; done; done
+unload_driver; for g in "${gpus[@]}"; do for f in ${gpu_funcs[$g]}; do rm -f "${DEVPATH[$f]}/driver"; done; done
 reset_regs
 
 echo "config: validation"
@@ -488,10 +497,10 @@ echo "config: cap and exclusion"
 reset_regs
 MAX_SIZE_INDEX=14; EXCLUDE_GPUS="0000:0e:00.0"
 discover_gpus
-assert_eq "excluded GPU dropped" "${#GPUS[@]}" 7
-assert_eq "excluded GPU makes its root impure" "${GPU_ROOT[0000:0b:00.0]}" "0000:08:08.0"
-assert_eq "cap applied" "${GPU_MAX_INDEX[0000:0b:00.0]}" 14
-assert_eq "cap does not raise a small card" "${GPU_MAX_INDEX[0000:2b:00.0]}" 13
+assert_eq "excluded GPU dropped" "${#gpus[@]}" 7
+assert_eq "excluded GPU makes its root impure" "${gpu_root[0000:0b:00.0]}" "0000:08:08.0"
+assert_eq "cap applied" "${gpu_max_index[0000:0b:00.0]}" 14
+assert_eq "cap does not raise a small card" "${gpu_max_index[0000:2b:00.0]}" 13
 MAX_SIZE_INDEX=""; EXCLUDE_GPUS=""
 
 echo "bind guard"
@@ -511,11 +520,11 @@ assert_eq "loser not bound" "$([[ -L ${DEVPATH[0000:1e:00.0]}/driver ]] && echo 
 assert_eq "sibling bound" "$([[ -L ${DEVPATH[0000:1b:00.0]}/driver ]] && echo bound || echo unbound)" bound
 assert_eq "loser register reset to baseline for the next boot" "$(read_size_index 0000:1e:00.0)" 8
 assert_eq "decode restored after the reset write" "$(cat "$REG/0000:1e:00.0.COMMAND")" 0x0407
-assert_eq "one GPU blocked" "$GUARD_BLOCKED" 1
+assert_eq "one GPU blocked" "$guard_blocked" 1
 MODPROBE_RC=1; unload_driver; MODPROBE_CALLS=0
 guard_and_load_driver 2>/dev/null; rc=$?
 assert_eq "modprobe failure is reported" "$rc:$MODPROBE_CALLS" "1:1"
-MODPROBE_RC=0; unload_driver; clear_stale_overrides; GPU_DIRTY=(); GPU_DIRTY_FROM=()
+MODPROBE_RC=0; unload_driver; clear_stale_overrides; gpu_dirty=(); gpu_dirty_from=()
 
 echo "root-bus GPU: resized in place by the kernel, never rescanned"
 reset_regs; plan_all_max; RULE=6x; INPLACE_WRITES=0; REENUM_CALLS=0
@@ -525,39 +534,39 @@ assert_eq "plan verified" "$rc" 0
 assert_eq "root-bus GPU at 32GiB" "$(bar0_bytes 0000:60:00.0)" $(( 32 << 30 ))
 assert_eq "register reflects the kernel's write" "$(read_size_index 0000:60:00.0)" 15
 assert_eq "one resource0_resize write" "$INPLACE_WRITES" 1
-assert_eq "root-bus GPU never dirty" "${GPU_DIRTY[0000:60:00.0]:-}" ""
-assert_eq "root-bus GPU was unbound for the in-place resize" "$([[ none:0000:60:00.0 == "${ACTIVE_GROUPS[-1]}" ]] && echo yes || echo no)" yes
+assert_eq "root-bus GPU never dirty" "${gpu_dirty[0000:60:00.0]:-}" ""
+assert_eq "root-bus GPU was unbound for the in-place resize" "$([[ none:0000:60:00.0 == "${active_groups[-1]}" ]] && echo yes || echo no)" yes
 assert_eq "switched GPUs still use the register (6 of 7 writes)" "$(( SETPCI_CTRL_WRITES - before ))" 6
 reset_regs; plan_all_max; INPLACE_FAIL=1; INPLACE_WRITES=0
 try_plan all-max 2>/dev/null; rc=$?
 assert_eq "in-place failure rejects the plan for that GPU" "$rc" 1
-assert_eq "it is the only loser" "$LAST_LOSERS" "0000:60:00.0 "
+assert_eq "it is the only loser" "${last_losers[*]}" "0000:60:00.0"
 assert_eq "kernel kept 256MiB" "$(bar0_bytes 0000:60:00.0)" $(( 256 << 20 ))
 assert_eq "the others were resized" "$(bar0_bytes 0000:0b:00.0)" $(( 32 << 30 ))
-reset_regs; ACHIEVED_PLAN=none
+reset_regs; achieved_plan=none
 negotiate 2>/dev/null
-assert_eq "negotiation demotes it and succeeds" "$ACHIEVED_PLAN:${PLAN[0000:60:00.0]}:${PLAN[0000:0b:00.0]}" "demote-losers-2:8:15"
+assert_eq "negotiation demotes it and succeeds" "$achieved_plan:${plan[0000:60:00.0]}:${plan[0000:0b:00.0]}" "demote-losers-2:8:15"
 INPLACE_FAIL=0; reset_regs
 
 echo "cleanup trap: overrides, decode, state report, idempotence, exit status"
 discover_gpus; reset_regs; clear_stale_overrides
 set_override 0000:0b:00.0 none                      # ours for the run
 block_binding 0000:1e:00.0                          # deliberate: fenced-off GPU
-printf '0x0405\n' > "$REG/0000:0e:00.0.COMMAND"; GPU_DECODE_OFF[0000:0e:00.0]=1
-GPU_DIRTY[0000:0b:00.0]=1; GPU_DIRTY_FROM[0000:0b:00.0]=8
-out=$( log_info() { echo "$*"; }; log_warn() { echo "$*"; }; TOUCHED=1; cleanup; echo ---; cleanup )
+printf '0x0405\n' > "$REG/0000:0e:00.0.COMMAND"; gpu_decode_off[0000:0e:00.0]=1
+gpu_dirty[0000:0b:00.0]=1; gpu_dirty_from[0000:0b:00.0]=8
+out=$( log_info() { echo "$*"; }; log_warn() { echo "$*"; }; touched=1; cleanup; echo ---; cleanup )
 assert_eq "cleanup: our override cleared" "$(cat "${DEVPATH[0000:0b:00.0]}/driver_override")" ""
 assert_eq "cleanup: deliberate override kept" "$(cat "${DEVPATH[0000:1e:00.0]}/driver_override")" none
 assert_eq "cleanup: decode re-enabled" "$(cat "$REG/0000:0e:00.0.COMMAND")" 0x0407
 assert_eq "cleanup: one state line per GPU" "$(grep -c '^state of ' <<<"$out")" 8
 assert_eq "cleanup: dirty GPU called out" "$(grep -c '^state of 0000:0b:00.0: size index 8 (written, not re-enumerated)' <<<"$out")" 1
 assert_eq "cleanup: second run does nothing" "$(sed -n '/^---$/,$p' <<<"$out" | wc -l)" 1
-out=$( log_info() { echo "$*"; }; log_warn() { echo "$*"; }; GPU_DIRTY=(); OVERRIDE_SET=(); GPU_DECODE_OFF=(); TOUCHED=1; RUN_COMPLETE=1; cleanup )
+out=$( log_info() { echo "$*"; }; log_warn() { echo "$*"; }; gpu_dirty=(); override_set=(); gpu_decode_off=(); touched=1; run_complete=1; cleanup )
 assert_eq "cleanup: silent after a complete clean run" "$out" ""
 ( install_traps; exit 2 ) 2>/dev/null; assert_eq "EXIT trap preserves the exit status" "$?" 2
 ( install_traps; kill -TERM $BASHPID; echo unreachable ) 2>/dev/null; assert_eq "SIGTERM exits 143 after cleanup" "$?" 143
 ( install_traps; kill -INT $BASHPID; echo unreachable ) 2>/dev/null; assert_eq "SIGINT exits 130 after cleanup" "$?" 130
-GPU_DIRTY=(); GPU_DIRTY_FROM=(); GPU_DECODE_OFF=(); clear_stale_overrides; OVERRIDE_SET=(); OVERRIDE_KEEP=()
+gpu_dirty=(); gpu_dirty_from=(); gpu_decode_off=(); clear_stale_overrides; override_set=(); override_keep=()
 
 echo "verification: phase 3 with and without XGMI hives"
 # v6.0 died here when no GPU exposed a hive (the attribute is a directory, so
@@ -565,11 +574,11 @@ echo "verification: phase 3 with and without XGMI hives"
 # The script no longer uses errexit, but the summary must still come out.
 set_bars 0000:1e:00.0 15 assigned
 discover_gpus
-for g in $(resizable_gpus); do set_bars "$g" "${GPU_MAX_INDEX[$g]}" assigned; done
-for g in "${GPUS[@]}"; do ln -sfn "$SYSFS/bus/pci/drivers/amdgpu" "${DEVPATH[$g]}/driver"; done
+while read -r g; do set_bars "$g" "${gpu_max_index[$g]}" assigned; done < <(resizable_gpus)
+for g in "${gpus[@]}"; do ln -sfn "$SYSFS/bus/pci/drivers/amdgpu" "${DEVPATH[$g]}/driver"; done
 run_phase3() {   # prints the log lines; rc is phase3_verify's
     ( log_info() { echo "$*"; }; log_ok() { echo "$*"; }; log_warn() { echo "$*"; }; log_err() { echo "$*"; }
-      ACHIEVED_PLAN=all-max; phase3_verify ) 2>/dev/null
+      achieved_plan=all-max; phase3_verify ) 2>/dev/null
 }
 rm -f "$STATE_DIR/summary"
 out=$(run_phase3); rc=$?
@@ -582,7 +591,7 @@ out=$(run_phase3); rc=$?
 assert_eq "two hives: rc" "$rc" 0
 assert_eq "two hives: per-GPU hive id" "$(grep -c 'XGMI hive: 111' <<<"$out")" 2
 assert_eq "two hives: summary" "$(sed -n 's/.*XGMI hives (id x members): //p' <<<"$out")" "111x2 222x2 "
-for g in "${GPUS[@]}"; do rm -f "${DEVPATH[$g]}/driver"; done
+for g in "${gpus[@]}"; do rm -f "${DEVPATH[$g]}/driver"; done
 
 echo "command line: subcommands, version, help, check"
 LOCK_FILE=$T/lock
@@ -612,7 +621,7 @@ echo "read-only commands leave the state directory as they found it"
 # baseline-* files are the one record a read-only command may create (first
 # observation, 2.2); here they exist already and must not change either.
 rm -rf "$STATE_DIR"; mkdir -p "$STATE_DIR"
-for g in $(resizable_gpus); do echo 8 > "$STATE_DIR/baseline-$g"; done
+while read -r g; do echo 8 > "$STATE_DIR/baseline-$g"; done < <(resizable_gpus)
 echo "0 2" > "$STATE_DIR/bars-0000:0b:00.0"; echo "plan=x" > "$STATE_DIR/summary"
 touch -d '2000-01-01 00:00:00' "$STATE_DIR"/*
 before=$(cd "$STATE_DIR" && ls | sort | tr '\n' ' ')
@@ -620,7 +629,7 @@ run_main status; run_main diagnose; run_main dry-run
 assert_eq "read-only: no file added or removed" "$(cd "$STATE_DIR" && ls | sort | tr '\n' ' ')" "$before"
 assert_eq "read-only: bars-* content unchanged" "$(cat "$STATE_DIR/bars-0000:0b:00.0")" "0 2"
 assert_eq "read-only: nothing under the state dir touched" "$(find "$STATE_DIR" -mindepth 1 -newermt '2000-01-02' | wc -l)" 0
-assert_eq "read-only: the record is still read" "$(RECORD_BARS=0; rm -f "$STATE_DIR/bars-0000:0e:00.0"; echo "0 2" > "$STATE_DIR/bars-0000:0e:00.0"; set_bars 0000:0e:00.0 8 assigned; gpu_mem_bars 0000:0e:00.0; [[ -e $STATE_DIR/bars-0000:0e:00.0 ]] && cat "$STATE_DIR/bars-0000:0e:00.0")" "0 2 5
+assert_eq "read-only: the record is still read" "$(record_bars=0; rm -f "$STATE_DIR/bars-0000:0e:00.0"; echo "0 2" > "$STATE_DIR/bars-0000:0e:00.0"; set_bars 0000:0e:00.0 8 assigned; gpu_mem_bars 0000:0e:00.0; [[ -e $STATE_DIR/bars-0000:0e:00.0 ]] && cat "$STATE_DIR/bars-0000:0e:00.0")" "0 2 5
 0 2"
 rm -rf "$STATE_DIR"; mkdir -p "$STATE_DIR"
 journalctl() { :; }                   # no journal in the harness
@@ -659,13 +668,13 @@ assert_eq "second dies fenced off" "$(cat "${DEVPATH[0000:0e:00.0]}/driver_overr
 assert_eq "first dies bound" "$(bound 0000:0b:00.0),$(bound 0000:1b:00.0)" "amdgpu,amdgpu"
 assert_eq "verdict strings" "$(grep -c 'Plan achieved : none' "$T/main.err"):$(grep -c 'Driverless    : 2 / 8' "$T/main.err"):$(grep -c 'rejected: unassigned BARs on: ' "$T/main.err")" "1:1:4"
 assert_eq "fenced-off dies reset to baseline for the next boot" "$(read_size_index 0000:0e:00.0):$(read_size_index 0000:1e:00.0)" "8:8"
-unload_driver; reset_regs; clear_stale_overrides; OVERRIDE_SET=(); OVERRIDE_KEEP=(); RULE=6x; MODPROBE_RC=1
+unload_driver; reset_regs; clear_stale_overrides; override_set=(); override_keep=(); RULE=6x; MODPROBE_RC=1
 run_main resize --force; assert_eq "modprobe failure: exit 1" "$?" 1
 MODPROBE_RC=0; unload_driver; reset_regs; SETPCI_FAIL_AFTER=$((SETPCI_CTRL_WRITES + 1))
 run_main resize --force; rc=$?
 assert_eq "register left dirty: exit 1, driver never loaded" "$rc:$(grep -c 'not re-enumerated on: 0000:0b:00.0' "$T/main.err"):$([[ -d $SYSFS/module/amdgpu ]] && echo loaded || echo not-loaded)" "1:1:not-loaded"
 assert_eq "cleanup reported the dirty die" "$(grep -c 'state of 0000:0b:00.0: size index 15 (written, not re-enumerated)' "$T/main.err")" 1
-SETPCI_FAIL_AFTER=-1; GPU_DIRTY=(); GPU_DIRTY_FROM=(); unload_driver; reset_regs; clear_stale_overrides
+SETPCI_FAIL_AFTER=-1; gpu_dirty=(); gpu_dirty_from=(); unload_driver; reset_regs; clear_stale_overrides
 run_main resize --force; assert_eq "recovered: exit 0" "$?" 0
 run_main revert; rc=$?
 assert_eq "revert: exit 0, baseline plan, everything bound" "$rc:$(grep -c 'Plan achieved : baseline' "$T/main.err"):$(bound 0000:0b:00.0):$(bar0_bytes 0000:0b:00.0)" "0:1:amdgpu:$(( 256 << 20 ))"
