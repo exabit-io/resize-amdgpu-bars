@@ -4,7 +4,7 @@ Upstream history of resize-amdgpu-bars. Versions before 6.0 were a single
 script maintained on the reference machine and never packaged; their entries
 are reconstructed from the script headers.
 
-## 1.1 (unreleased)
+## 1.1 (2026-09-03)
 
 Hardening and the fixes from the 1.0 boot audit. No change to the resize
 method.
