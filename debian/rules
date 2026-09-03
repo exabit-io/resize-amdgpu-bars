@@ -38,6 +38,9 @@ override_dh_auto_test:
 override_dh_installchangelogs:
 	dh_installchangelogs CHANGELOG.md
 
+override_dh_installman:
+	dh_installman $(MANPAGES)
+
 override_dh_auto_install:
 	install -D -m 0755 $(SCRIPT) $(PKGDIR)/usr/sbin/resize-amdgpu-bars
 

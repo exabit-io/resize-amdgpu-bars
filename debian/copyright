@@ -1,6 +1,6 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: resize-amdgpu-bars
-Upstream-Contact: Exabit, Inc. <packages@exabit.io>
+Upstream-Contact: Exabit Inc. <packages@exabit.io>
 Source: https://github.com/exabit-io/resize-amdgpu-bars
 
 Files: *

@@ -6,4 +6,4 @@ resize-amdgpu-bars (1.0) unstable; urgency=medium
     and loads amdgpu once behind a bind guard. The upstream changelog
     (changelog.gz in the package documentation) records the internal builds.
 
- -- Exabit, Inc. <packages@exabit.io>  Thu, 03 Sep 2026 01:01:10 +0000
+ -- Exabit Inc. <packages@exabit.io>  Thu, 03 Sep 2026 01:01:10 +0000
