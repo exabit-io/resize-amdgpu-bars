@@ -126,6 +126,16 @@ Vega II Duo modules reads `verdict=WORKS plan=all-max large=4/4
 driverless=0/4`, `windows=0000:06:00.0=128G 0000:16:00.0=128G` on a
 patched 7.0 kernel (96G on 6.x), `kfd=5`, `xgmi_hives=1`.
 
+The unit's sandbox is part of what a boot test covers. A change to any
+hardening line in `debian/resize-amdgpu-bars.service`, `SystemCallFilter=`
+above all, is a behavioural change: a filter that misses a syscall fails
+the command with `EPERM` (the journal shows which one), and one that is
+wrong in a way `SystemCallErrorNumber=` cannot soften leaves amdgpu
+blacklisted with no driver loaded. Validate first in a transient unit that
+carries every `[Service]` line of the shipped unit (`systemd-run --wait
+--pipe --collect -p ... resize-amdgpu-bars dry-run`, then the harness, then
+a real `modprobe` of a small module and a `setpci` read), then boot.
+
 A boot test of the guard is the same procedure on an unpatched 7.0 kernel:
 the run must end with exit status 2, `verdict=FAILS (bind guard held)`,
 `driverless=` equal to the number of second dies, every guarded die present
