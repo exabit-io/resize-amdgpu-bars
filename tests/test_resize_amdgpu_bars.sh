@@ -632,7 +632,10 @@ unset -f journalctl
 
 echo "full runs through main: exit status 0 / 2 / 1, journal hygiene"
 unload_driver; reset_regs; clear_stale_overrides; RULE=6x; MODPROBE_RC=0
+have_tool() { return 1; }             # no ROCm tools on this box
 run_main resize --force; rc=$?
+assert_eq "empty unassigned lists print none, never an empty value" "$(grep -c 'unassigned regions: none' "$T/main.err"):$(grep -c 'unassigned: none' "$T/main.err"):$(grep -cE 'unassigned( regions)?: *$' "$T/main.err")" "8:8:0"
+assert_eq "Done line without ROCm tools names status" "$(grep -c '^\[INFO\]  Done. Check with: resize-amdgpu-bars status$' "$T/main.err")" 1
 assert_eq "all-max on a 6.x-like kernel: exit 0" "$rc" 0
 assert_eq "SUCCESS line" "$(grep -c 'SUCCESS:' "$T/main.err")" 1
 assert_eq "Plan achieved line" "$(grep -c 'Plan achieved : all-max' "$T/main.err")" 1
@@ -644,8 +647,11 @@ assert_eq "journal: no rule or box lines" "$(grep -cE '^\[[A-Z]+\] +[-=_#*]{4,}'
 assert_eq "journal: one-line phase banners" "$(grep -c '^== Phase ' "$T/main.err")" 3
 assert_eq "journal: nothing on stdout" "$(wc -c < "$T/main.out")" 0
 assert_eq "resize records the memory BARs it saw" "$(cat "$STATE_DIR/bars-0000:0b:00.0" 2>/dev/null)" "0 2 5"
+have_tool() { [[ $1 == rocm-smi ]]; }  # one ROCm tool present
 run_main resize --force; rc=$?
 assert_eq "second run takes the fast path: exit 0, nothing re-enumerated" "$rc:$(grep -c 'no re-enumeration needed' "$T/main.err")" "0:1"
+assert_eq "Done line with a ROCm tool names it" "$(grep -c '^\[INFO\]  Done. Verify with: rocminfo / rocm-smi$' "$T/main.err")" 1
+have_tool() { return 1; }
 unload_driver; reset_regs; clear_stale_overrides; RULE=70vanilla
 run_main resize --force; rc=$?
 assert_eq "unpatched-7.0-like kernel: exit 2 (bind guard holding)" "$rc" 2

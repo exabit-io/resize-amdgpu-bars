@@ -231,6 +231,8 @@ sysfs_write() { [[ -w $1 ]] && echo "$2" > "$1"; } 2>/dev/null
 # The module directory in sysfs, not "lsmod | grep": no pipeline to misread.
 driver_loaded() { [[ -d $SYSFS/module/$DRIVER ]]; }
 attr()   { cat "$(sysdev "$1")/$2" 2>/dev/null || true; }
+# have_tool NAME -- true when NAME is on PATH (the harness replaces this)
+have_tool() { command -v "$1" >/dev/null 2>&1; }
 is_bridge() { [[ $(attr "$1" class) == 0x0604* ]]; }
 present()   { [[ -e $(sysdev "$1") ]]; }
 # driver_of BDF -- prints the name of the driver bound to the function, or "none"
@@ -648,7 +650,8 @@ report_discovery() {
             else
                 log_info "    no Resizable BAR capability; will not resize (driver only)"
             fi
-            log_info "    BAR0: $(human_bytes "$(bar0_bytes "$g")")   unassigned regions: $(bar_unassigned_list "$g")"
+            local unassigned; unassigned=$(bar_unassigned_list "$g")
+            log_info "    BAR0: $(human_bytes "$(bar0_bytes "$g")")   unassigned regions: ${unassigned:-none}"
             local drv ovr
             drv=$(driver_of "$g")
             ovr=$(attr "$g" driver_override)
@@ -670,10 +673,11 @@ report_discovery() {
 }
 
 report_bars() {
-    local g
+    local g unassigned
     for g in "${GPUS[@]}"; do
         present "$g" || { log_info "    $g  (not present)"; continue; }
-        log_info "    $g  BAR0=$(human_bytes "$(bar0_bytes "$g")")  unassigned: $(bar_unassigned_list "$g")"
+        unassigned=$(bar_unassigned_list "$g")
+        log_info "    $g  BAR0=$(human_bytes "$(bar0_bytes "$g")")  unassigned: ${unassigned:-none}"
     done
 }
 
@@ -1391,7 +1395,11 @@ main() {
     phase3_verify
     (( rc == 0 )) || { log_err "Driver load did not complete cleanly. See messages above."; return 1; }
     RUN_COMPLETE=1
-    log_info "Done. Verify with: rocminfo / rocm-smi"
+    if have_tool rocminfo || have_tool rocm-smi; then
+        log_info "Done. Verify with: rocminfo / rocm-smi"
+    else
+        log_info "Done. Check with: resize-amdgpu-bars status"
+    fi
     return "$(run_exit_status)"
 }
 
