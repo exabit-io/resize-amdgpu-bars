@@ -114,7 +114,7 @@ die() {
 # attr BDF NAME -- print a sysfs attribute, empty when unreadable
 attr() {
 	local v
-	v=$(< "$pci_devs/$1/$2") 2> /dev/null || v=''
+	{ v=$(< "$pci_devs/$1/$2"); } 2> /dev/null || v=''
 	printf '%s' "$v"
 }
 

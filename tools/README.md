@@ -16,8 +16,10 @@ windows above the die?
    plus a rescan. The one objection a maintainer will raise is "why not the
    sysfs path?". The report answers that from the code (the sysfs write
    re-sizes the bridge windows through the same `pbus_size_mem()` sum, so it
-   fails under the same undersized window) but the paragraph is marked
-   `[TO CONFIRM by experiment]`. This script is that experiment.
+   fails under the same undersized window) and that paragraph was marked
+   `[TO CONFIRM by experiment]`. This script was that experiment. It ran on
+   2026-09-03 on 7.0.12 and the answer was "it fails, but lower down than
+   predicted"; the report now carries the measured result (see "Result").
 2. To-do 2.3 makes root-bus GPUs use the sysfs path. Knowing what the path
    does behind a switch decides what the README says the kernel's in-place
    resize can and cannot do.
@@ -145,19 +147,52 @@ the firmware layout: boot vanilla with `modprobe.blacklist=amdgpu
 systemd.mask=resize-amdgpu-bars.service` (all four dies at 256 MiB, windows
 as firmware left them) and write `--index 15` to one die. The verdict then
 shows whether the in-place path can grow a single die to 32 GiB inside the
-firmware's 770 MiB parent window (it cannot: the chain must grow, and
-growing re-sizes the shared root-port window with the buggy sum).
+firmware's 770 MiB parent window. It cannot, and not for the reason first
+expected: see "Result" below.
 
-### Expected outcomes and what each one means
+### Result (2026-09-03, 7.0.12-vanilla, firmware layout, 0000:0b:00.0)
 
-| kernel | write | expected | meaning |
-|---|---|---|---|
-| 7.0 + fix (7.0.0-30 +barfix1, 7.0.12-barfix) | 15 → 8 → 15 | both writes rc=0, BAR0 back at 32 GiB, `bridge-windows.txt` shows the chain shrink and grow | the sysfs path works behind the switch once the sizing is right; 2.3 can rely on it for root-bus GPUs |
-| 6.17 | 15 → 8 → 15 | as above, windows 48G/96G style | same |
-| 7.0.12-vanilla, firmware layout | 8 → 15 | write rc=28 (`ENOSPC`), dmesg `can't assign; no space` then `old value restored`, BAR0 still 256 MiB | the objection is answered: the sanctioned interface fails identically, because it re-sizes the parent with the same sum |
-| any | restore fails | verdict says ATTENTION, script refuses to re-bind | the die is BAR-less; reboot; do not modprobe |
+Run from a no-die-bound boot (unit masked, amdgpu never loaded, all four
+dies at index 8, shared window `06:00.0`/`07:00.0` = 770 MiB). Evidence:
+`/root/linux-pci-bug-evidence/resource0-resize-7.0.12-vanilla-0b:00.0/`.
 
-### Recording the result
+| step | what happened |
+|---|---|
+| `echo 15 > resource0_resize` | write error `ENOSPC` after ~0.45 s; no hang |
+| kernel, release phase | `0b:00.0` BAR 0 and BAR 2 `releasing`; `0a:00.0`, `09:00.0`, `08:08.0` windows `releasing`; then `07:00.0` and `06:00.0` (the shared window, `0x9ffc0000000-0x9fff01fffff`) `was not released (still contains assigned resources)` |
+| kernel, assign phase | `08:08.0`/`09:00.0`/`0a:00.0` `bridge window [mem size 0x800200000 64bit pref]: can't assign; no space`; `0b:00.0` BAR 0 and BAR 2 likewise; both BARs `old value restored` |
+| after the write | `resource0_resize` still index 8, BAR0 still 256 MiB at its firmware address |
+| `echo 8` (restore) | rc=0, same release/assign lines, everything back where it was |
+| final | `bridge-windows.txt` before and after byte-identical; `0b:00.1` re-bound to `snd_hda_intel` |
+
+What it means: the sibling die `0e:00.0` is assigned inside the shared
+window, so `pci_resize_resource()` never releases that window and never
+re-sizes it. The three bridges below it then need 32 GiB + 2 MiB inside
+770 MiB and fail. The path stops one level *below* `pbus_size_mem()`, so:
+
+- The maintainer's objection is answered, but not with "it fails under the
+  same sum". The sanctioned interface does not reach the buggy code on a
+  dual-die module at all; only the register write + rescan (the tool's
+  method, and the report's reproducer) and amdgpu's probe-time
+  `pci_resize_resource()` from a freshly enumerated tree do.
+- The sysfs path is not a workaround on a dual-die module on any kernel,
+  6.17 and fixed 7.0 included: the pin is the sibling's BARs, not the
+  window arithmetic. This replaced the report's predicted "parent re-sized
+  to 64G+4M" paragraph with the measured one.
+- To-do 2.3 (root-bus GPUs use the sysfs path) is unaffected: a GPU on a
+  root port has no sibling in its window.
+
+### Not run, and what would be learned
+
+| kernel | write | question |
+|---|---|---|
+| 7.0 + fix (7.0.0-30 +barfix1, 7.0.12-barfix) | 15 → 8 → 15 | the shrink should fit in place; whether the grow-back fits inside the already 32 GiB-sized shared window without releasing it has not been measured |
+| 6.17 | 15 → 8 → 15 | same question, 48G/96G-style windows |
+| any | restore fails | verdict says ATTENTION, script refuses to re-bind; the die is BAR-less: reboot, do not modprobe |
+
+### Recording a result
+
+Done for the 7.0.12 run above; for any further run:
 
 1. Copy the evidence directory into `/root/linux-pci-bug-evidence/` as
    `resource0-resize-<kernel>-<die>/` and add it to the bundle list in
@@ -167,7 +202,7 @@ growing re-sizes the shared root-port window with the buggy sum).
    measured result (the write's return value, the two dmesg lines, the
    parent window before and after), then regenerate the mbox with
    `/root/linux-pci-bug-report-mkmbox.sh`.
-3. In the repository README, compatibility section: add the sysfs path to
-   the list of what fails behind a switch on unpatched 7.0, or, if it
-   worked somewhere it was not expected to, say exactly where.
-4. Add a row to the table above with the real numbers, and tick to-do 10.2.
+3. In the repository README ("Why the usual ways fail here" and "Kernel
+   compatibility"), say what was measured; if the path worked somewhere it
+   was not expected to, say exactly where.
+4. Add the run to the tables above with the real numbers.

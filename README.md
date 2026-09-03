@@ -86,10 +86,24 @@ the kernel enumerates the subtree again.
 sanctioned interface and ends up in the same `pci_resize_resource()` as the
 driver. It can re-assign a BAR in place when the device sits directly on a
 root port with a single window above it, and that is exactly where
-`resize-amdgpu-bars` uses it (tier 3 below). It cannot conjure a larger shared
-window out of a chain of bridges that the firmware sized for something
-smaller, and it has not been measured on the Duo chain; the driver's resize,
-which uses the same function, fails there.
+`resize-amdgpu-bars` uses it (tier 3 below). On the Duo chain it fails, and
+it fails on every kernel. Measured on upstream 7.0.12 from the firmware
+layout (all four dies at 256 MiB, no driver bound): the write returns
+`ENOSPC`, the kernel logs `old value restored`, and BAR0 stays at 256 MiB.
+The kernel releases the die's BARs and the windows of the three bridges
+that belong to that die alone, but the window the two dies share is never
+released, because the sibling die's BARs are still assigned inside it:
+
+```
+pcieport 0000:07:00.0: bridge window [mem 0x9ffc0000000-0x9fff01fffff 64bit pref]: was not released (still contains assigned resources)
+pcieport 0000:06:00.0: bridge window [mem 0x9ffc0000000-0x9fff01fffff 64bit pref]: was not released (still contains assigned resources)
+pcieport 0000:08:08.0: bridge window [mem size 0x800200000 64bit pref]: can't assign; no space
+```
+
+A 32 GiB BAR then has to fit inside the firmware's 770 MiB shared window,
+and it cannot. The path gives up one level below the shared window, so it
+never re-sizes it at all: this is not the 7.0 sizing regression, it is a
+property of the interface, and it holds on 6.x and on a fixed 7.0 as well.
 
 ## The method
 
@@ -195,7 +209,7 @@ The package needs `bash`, `pciutils`, `kmod` and `systemd`, and uses
 `.deb` from the release page:
 
 ```
-sudo apt install ./resize-amdgpu-bars_1.0_all.deb
+sudo apt install ./resize-amdgpu-bars_1.1_all.deb
 ```
 
 or build it from source:
@@ -203,7 +217,7 @@ or build it from source:
 ```
 sudo apt install debhelper scdoc shellcheck
 dpkg-buildpackage -us -uc -b
-sudo apt install ../resize-amdgpu-bars_1.0_all.deb
+sudo apt install ../resize-amdgpu-bars_1.1_all.deb
 ```
 
 The package installs these files:
@@ -553,6 +567,15 @@ or a 7.0 build that carries the patch. Patched Ubuntu HWE kernel packages
 exist as a stopgap in a private repository; they are not part of this
 project and are not a supported configuration.
 
+The sysfs `resource0_resize` path is not a way around any of this on a
+dual-die module. Measured on upstream 7.0.12 from the firmware layout, the
+write fails with `ENOSPC` because the window both dies share is pinned by
+the sibling's assigned BARs and is never released, let alone re-sized. That
+happens below the code the regression is in, so the sysfs path fails the
+same way on 6.x and on a fixed 7.0, and it is not the tool's method behind
+a switch (see "Why the usual ways fail here"). Evidence for both the
+regression and the sysfs result is in the upstream report.
+
 Upstream thread: (link to be added once the report is on linux-pci).
 
 ## Known issues
@@ -571,11 +594,9 @@ Upstream thread: (link to be added once the report is on linux-pci).
   fail with a message asking for a re-run; hot-plug during a run is not
   handled.
 - BAR sizes between the baseline and the maximum (8 GiB, 16 GiB) have not
-  been exercised on the 7.0 kernel, and the sysfs `resource0_resize` path
-  has not been measured on a switched chain.
+  been exercised on the 7.0 kernel.
 - Tier 2 and tier 3 hardware is untested; the offline harness models it,
   the box has not. Reports with `diagnose` output are welcome.
-- The 6.x aliases print a deprecation warning on every use.
 
 ## Licence
 
