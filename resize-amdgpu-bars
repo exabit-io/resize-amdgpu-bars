@@ -102,6 +102,14 @@ MODPROBE_TIMEOUT=180
 PROBE_WAIT=60
 RESCAN_WAIT=30
 MAX_ROUNDS=8
+# The service unit kills the run after UNIT_TIMEOUT seconds; the value
+# mirrors TimeoutStartSec= in resize-amdgpu-bars.service and must change
+# with it. The part of a run that always takes its full time when the
+# driver misbehaves (modprobe up to MODPROBE_TIMEOUT, its kill grace, then
+# PROBE_WAIT) has to fit inside it, or the unit is killed mid-run instead of
+# reporting; validate_config enforces that.
+UNIT_TIMEOUT=480
+MODPROBE_KILL_GRACE=30        # --kill-after of the modprobe timeout(1)
 
 # Named delays (seconds). REMOVE_SETTLE lets the hot-unplug of a removed
 # subtree finish before its bus is rescanned; BIND_SETTLE lets an unbind
@@ -142,9 +150,17 @@ validate_config() {
     if [[ -n $MAX_SIZE_INDEX ]] && ! { [[ $MAX_SIZE_INDEX =~ ^[0-9]+$ ]] && (( 10#$MAX_SIZE_INDEX <= 43 )); }; then
         log_err "MAX_SIZE_INDEX='$MAX_SIZE_INDEX' in $CONFIG_FILE: must be empty or an integer 0..43"; bad=1
     fi
+    local timing_ok=1 serial
     for v in MODPROBE_TIMEOUT PROBE_WAIT RESCAN_WAIT MAX_ROUNDS; do
-        [[ ${!v} =~ ^[1-9][0-9]*$ ]] || { log_err "$v='${!v}' in $CONFIG_FILE: must be a positive integer"; bad=1; }
+        [[ ${!v} =~ ^[1-9][0-9]*$ ]] || { log_err "$v='${!v}' in $CONFIG_FILE: must be a positive integer"; bad=1; timing_ok=0; }
     done
+    if (( timing_ok )); then
+        serial=$(( MODPROBE_TIMEOUT + MODPROBE_KILL_GRACE + PROBE_WAIT ))
+        if (( serial >= UNIT_TIMEOUT )); then
+            log_err "MODPROBE_TIMEOUT=$MODPROBE_TIMEOUT + PROBE_WAIT=$PROBE_WAIT in $CONFIG_FILE: with the ${MODPROBE_KILL_GRACE}s kill grace that is ${serial}s, not below the service's TimeoutStartSec of ${UNIT_TIMEOUT}s; the unit would be killed mid-run"
+            bad=1
+        fi
+    fi
     for b in $EXCLUDE_GPUS; do
         [[ $b =~ ^[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$ ]] || { log_err "EXCLUDE_GPUS entry '$b' in $CONFIG_FILE: must be a PCI address like 0000:0b:00.0"; bad=1; }
     done
@@ -1022,7 +1038,7 @@ guard_and_load_driver() {
         done
     else
         log_info "Loading $DRIVER (timeout ${MODPROBE_TIMEOUT}s so boot can never wedge)..."
-        if timeout --signal=TERM --kill-after=30 "$MODPROBE_TIMEOUT" modprobe "$DRIVER"; then
+        if timeout --signal=TERM --kill-after="$MODPROBE_KILL_GRACE" "$MODPROBE_TIMEOUT" modprobe "$DRIVER"; then
             log_ok "$DRIVER loaded."
         else
             local rc=$?
@@ -1203,7 +1219,8 @@ Configuration file: /etc/default/resize-amdgpu-bars (shell syntax, all optional)
                     15 = 32GiB, 14 = 16GiB, 13 = 8GiB); empty = device maximum
   EXCLUDE_GPUS      "0000:0b:00.0 ..." GPUs to leave completely alone
   FORCE_PLAN        all-max | baseline: use exactly that plan, no negotiation
-  MODPROBE_TIMEOUT  seconds modprobe may take (180)
+  MODPROBE_TIMEOUT  seconds modprobe may take (180); MODPROBE_TIMEOUT + 30 +
+                    PROBE_WAIT must stay below the unit's TimeoutStartSec (480)
   PROBE_WAIT        seconds to wait for every unguarded GPU to bind (60)
   RESCAN_WAIT       seconds to wait for removed devices to return (30)
   MAX_ROUNDS        demote-and-retry rounds before falling back to baseline (8)

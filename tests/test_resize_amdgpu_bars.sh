@@ -473,6 +473,15 @@ check_config "EXCLUDE_GPUS two good entries" 0 'EXCLUDE_GPUS="0000:0b:00.0 0000:
 check_config "FORCE_PLAN=first-large" 1 'FORCE_PLAN=first-large'
 check_config "FORCE_PLAN=baseline ok" 0 'FORCE_PLAN=baseline'
 check_config "three faults" 1 'MAX_SIZE_INDEX=99' 'MAX_ROUNDS=0' 'FORCE_PLAN=x'; assert_eq "one line per fault" "$(wc -l < "$T/cfg.out")" 3
+echo "config: unit budget (MODPROBE_TIMEOUT + kill grace + PROBE_WAIT below TimeoutStartSec)"
+check_config "MODPROBE_TIMEOUT=600 over budget" 1 'MODPROBE_TIMEOUT=600'
+assert_eq "budget message names the values and the budget" "$(grep -c "MODPROBE_TIMEOUT=600 + PROBE_WAIT=60 in /dev/null: with the 30s kill grace that is 690s, not below the service's TimeoutStartSec of 480s" "$T/cfg.out")" 1
+check_config "MODPROBE_TIMEOUT=389 just inside" 0 'MODPROBE_TIMEOUT=389'
+check_config "MODPROBE_TIMEOUT=390 reaches the budget" 1 'MODPROBE_TIMEOUT=390'
+check_config "PROBE_WAIT=269 just inside" 0 'PROBE_WAIT=269'
+check_config "PROBE_WAIT=270 reaches the budget" 1 'PROBE_WAIT=270'
+check_config "budget not judged on a non-integer" 1 'MODPROBE_TIMEOUT=lots'; assert_eq "one message, the integer one" "$(wc -l < "$T/cfg.out"):$(grep -c 'positive integer' "$T/cfg.out")" "1:1"
+assert_eq "kill grace is the constant the modprobe timeout uses" "$(grep -c -- '--kill-after="\$MODPROBE_KILL_GRACE"' "$SCRIPT")" 1
 assert_eq "validation did not leak into the harness" "$MAX_SIZE_INDEX|$MAX_ROUNDS|$FORCE_PLAN" "|8|"
 
 echo "config: cap and exclusion"
