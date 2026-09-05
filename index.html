@@ -17,4 +17,17 @@ sudo apt install resize-amdgpu-bars</pre>
 (<a href="keys/resize-amdgpu-bars.asc">ASCII-armoured</a>, <a href="keys/resize-amdgpu-bars.gpg">binary</a>).
 Suite <code>stable</code>, component <code>main</code>; the package is architecture-independent.</p>
 <p><a href="dists/stable/">dists/stable/</a> &middot; <a href="pool/main/resize-amdgpu-bars/">pool/</a></p>
+<h2>Kernel packages (Ubuntu 24.04 HWE 7.0)</h2>
+<p>Ubuntu's <code>linux-hwe-7.0</code> kernel rebuilt with the PCI bridge-window sizing fix that
+the 7.0 series needs for dual-die cards, as drop-in <code>+barfix1</code> packages (same ABI,
+configuration and package names). The <code>linux-modules</code> package is larger than GitHub Pages
+allows, so the kernel is published as a signed flat apt repository on the
+<a href="https://github.com/exabit-io/resize-amdgpu-bars/releases/tag/kernel-7.0.0-31.31-24.04.1-barfix1">kernel-7.0.0-31.31-24.04.1-barfix1</a> release,
+using the same key as this site:</p>
+<pre>echo 'deb [signed-by=/etc/apt/keyrings/resize-amdgpu-bars.gpg] https://github.com/exabit-io/resize-amdgpu-bars/releases/download/kernel-7.0.0-31.31-24.04.1-barfix1 ./' \
+    | sudo tee /etc/apt/sources.list.d/linux-hwe-7.0-barfix.list
+sudo apt update
+sudo apt install linux-generic-hwe-24.04</pre>
+<p>Current: <strong>7.0.0-31.31~24.04.1+barfix1</strong> (ABI 7.0.0-31). Not Secure Boot signed; see the release notes.</p>
+
 </body></html>
