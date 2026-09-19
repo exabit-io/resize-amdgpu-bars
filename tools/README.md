@@ -50,11 +50,12 @@ repositories.
 Two things in it are not optional and are the reason the script exists
 rather than a paragraph of instructions:
 
-- The kernel needs `Pin-Priority: 1001` on `l=linux-hwe-7.0-barfix`.
-  Ubuntu's own `7.0.0-31.31~24.04.2` respin sorts *above*
-  `7.0.0-31.31~24.04.1+barfix1`, so without the pin an upgrade quietly
-  replaces the fixed kernel with an unfixed one. The pin has to be on the
-  label: `apt_preferences(5)` splits the release line on commas, so
+- `Pin-Priority: 1001` on `l=linux-hwe-7.0-barfix` guards the kernel.
+  Ubuntu currently ships `7.0.0-31.31~24.04.1` for this ABI, which sorts
+  *below* `7.0.0-31.31~24.04.1+barfix1`, so today the fixed kernel wins on
+  version order alone; a respin of the same ABI (`~24.04.2`) would outrank
+  it and an ordinary upgrade would replace the fix. The pin has to be on
+  the label: `apt_preferences(5)` splits the release line on commas, so
   `o=Exabit, Inc.` never matches anything.
 - The gfx906 repository carries two complete ROCm streams at once and its
   unversioned metapackages (`amdrocm-blas`, `-llvm`, `-rand`, `-runtime`,

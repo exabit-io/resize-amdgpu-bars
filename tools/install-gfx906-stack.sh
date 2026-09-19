@@ -313,9 +313,10 @@ fi
 if chosen barfix || chosen bars; then
 	# Pin on the label, not the origin: apt_preferences(5) splits the
 	# release line on commas, so "o=Exabit, Inc." never matches and the
-	# repository quietly stays at the default 500. The kernel needs the
-	# 1001 because Ubuntu's own 7.0.0-31.31~24.04.2 respin sorts above
-	# ...~24.04.1+barfix1 and would replace the fix.
+	# repository quietly stays at the default 500. The 1001 is a guard
+	# for the kernel: Ubuntu ships 7.0.0-31.31~24.04.1 for this ABI,
+	# which sorts below ...~24.04.1+barfix1, but a respin of the same
+	# ABI (~24.04.2) would outrank the fix and replace it on upgrade.
 	if ((latest)); then
 		run rm -f /etc/apt/preferences.d/exabit
 	else
