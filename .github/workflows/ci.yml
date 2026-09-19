@@ -29,6 +29,7 @@ jobs:
           tests/test_resize_amdgpu_bars.sh
           tests/style/check.sh
           tools/experiment-resource0-resize.sh
+          tools/install-gfx906-stack.sh
 
   harness:
     name: offline harness
@@ -56,6 +57,7 @@ jobs:
           tests/test_resize_amdgpu_bars.sh
           tests/style/check.sh
           tools/experiment-resource0-resize.sh
+          tools/install-gfx906-stack.sh
 
   package:
     name: dpkg-buildpackage + lintian

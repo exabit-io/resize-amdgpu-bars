@@ -20,6 +20,51 @@ then commit and push `../apt-repo`. Suite `stable`, component `main`,
 architecture `amd64`; the key is the Exabit, Inc. apt repository key,
 `packages@exabit.io`, never a personal key. Needs `apt-utils` and `gpg`.
 
+## install-gfx906-stack.sh
+
+Sets up a second machine the way the gfx906 reference workstation is set
+up: adds five third-party apt repositories, fetches and fingerprint-checks
+their signing keys, writes the apt pins that keep them winning, and
+installs the 68 packages that come from them.
+
+```
+tools/install-gfx906-stack.sh --dry-run
+sudo tools/install-gfx906-stack.sh
+sudo tools/install-gfx906-stack.sh --only=barfix,bars
+```
+
+Groups: `gfx906` (58 packages, ROCm 10.0.0-gfx906 from mixa3607's TheRock
+build, for Vega 20 / MI50 / MI60), `torch` (`python3-torch-gfx906`),
+`barfix` (6, the 7.0.0-31 kernel with the shared-window fix), `bars`
+(`resize-amdgpu-bars`), `t2` (`applesmc-t2` and `t2fanrd`, SMC fan control
+on Apple T2 Macs). `--only=`/`--skip=` select groups, `--repos-only` stops
+after the sources, `--latest` drops the version pins, `--dry-run` prints
+the plan.
+
+Ubuntu 24.04 (noble) amd64. Package versions are pinned to what the
+reference machine runs; the set was verified by resolving the transaction
+against an empty dpkg status in a scratch apt root, where the roots in the
+script pull exactly those 68 packages and nothing else from the five
+repositories.
+
+Two things in it are not optional and are the reason the script exists
+rather than a paragraph of instructions:
+
+- The kernel needs `Pin-Priority: 1001` on `l=linux-hwe-7.0-barfix`.
+  Ubuntu's own `7.0.0-31.31~24.04.2` respin sorts *above*
+  `7.0.0-31.31~24.04.1+barfix1`, so without the pin an upgrade quietly
+  replaces the fixed kernel with an unfixed one. The pin has to be on the
+  label: `apt_preferences(5)` splits the release line on commas, so
+  `o=Exabit, Inc.` never matches anything.
+- The gfx906 repository carries two complete ROCm streams at once and its
+  unversioned metapackages (`amdrocm-blas`, `-llvm`, `-rand`, `-runtime`,
+  `-amdsmi`) track whichever is newest. Left alone they pull a second,
+  partly installed stream on top of the first. The script installs them
+  explicitly and holds them with a version pin.
+
+The t2 repository's `linux-t2-*` kernels are deliberately not installed:
+they are an alternative to the barfix kernel, not a companion.
+
 ## experiment-resource0-resize.sh
 
 **Question it answers:** does the kernel's own in-place Resizable BAR path,
