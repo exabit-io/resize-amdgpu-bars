@@ -35,7 +35,8 @@ printf 'Package: *\nPin: release l=linux-hwe-7.0-barfix\nPin-Priority: 1001\n' \
     | sudo tee /etc/apt/preferences.d/linux-hwe-7.0-barfix
 sudo apt update
 sudo apt install linux-generic-hwe-24.04     # later: sudo apt update &amp;&amp; sudo apt upgrade</pre>
-<p>Current: <strong>7.0.0-34.34~24.04.1+barfix1</strong> (ABI 7.0.0-34, Cascade Lake build); the channel
-also carries 7.0.0-31.31~24.04.1+barfix1. Not Secure Boot signed; see the release notes.</p>
+<p>Current: <strong>7.0.0-34.34~24.04.1+barfix2</strong> (ABI 7.0.0-34, Cascade Lake build), which carries the fix the
+upstream PCI maintainers posted, backported. The channel also carries 7.0.0-34.34~24.04.1+barfix1 (our earlier
+one-line fix, for rollback) and 7.0.0-31.31~24.04.1+barfix1. Not Secure Boot signed; see the release notes.</p>
 
 </body></html>
