@@ -17,17 +17,25 @@ sudo apt install resize-amdgpu-bars</pre>
 (<a href="keys/resize-amdgpu-bars.asc">ASCII-armoured</a>, <a href="keys/resize-amdgpu-bars.gpg">binary</a>).
 Suite <code>stable</code>, component <code>main</code>; the package is architecture-independent.</p>
 <p><a href="dists/stable/">dists/stable/</a> &middot; <a href="pool/main/resize-amdgpu-bars/">pool/</a></p>
-<h2>Kernel packages (Ubuntu 24.04 HWE 7.0)</h2>
+<h2>Kernel packages (Ubuntu 24.04 HWE, Mac Pro 7,1 channel)</h2>
 <p>Ubuntu's <code>linux-hwe-7.0</code> kernel rebuilt with the PCI bridge-window sizing fix that
-the 7.0 series needs for dual-die cards, as drop-in <code>+barfix1</code> packages (same ABI,
-configuration and package names). The <code>linux-modules</code> package is larger than GitHub Pages
-allows, so the kernel is published as a signed flat apt repository on the
-<a href="https://github.com/exabit-io/resize-amdgpu-bars/releases/tag/kernel-7.0.0-31.31-24.04.1-barfix1">kernel-7.0.0-31.31-24.04.1-barfix1</a> release,
-using the same key as this site:</p>
-<pre>echo 'deb [signed-by=/etc/apt/keyrings/resize-amdgpu-bars.gpg] https://github.com/exabit-io/resize-amdgpu-bars/releases/download/kernel-7.0.0-31.31-24.04.1-barfix1 ./' \
+the 7.0 series needs for dual-die cards, as drop-in <code>+barfix1</code> packages (same ABI and
+package names). Every rebuilt ABI goes into one rolling release,
+<a href="https://github.com/exabit-io/resize-amdgpu-bars/releases/tag/kernel-barfix">kernel-barfix</a>,
+which is a signed flat apt repository (the <code>linux-modules</code> package is larger than GitHub
+Pages allows), signed with the same key as this site. Point apt at it once; new ABIs arrive with
+<code>apt update &amp;&amp; apt upgrade</code>.</p>
+<p><strong>From 7.0.0-34 on, these kernels are built for the Mac Pro 7,1's Cascade Lake CPUs</strong>
+(<code>-march=native</code>). Do not subscribe other machines; see the release notes. The generic
+7.0.0-31 build stays available as the
+<a href="https://github.com/exabit-io/resize-amdgpu-bars/releases/tag/kernel-7.0.0-31.31-24.04.1-barfix1">kernel-7.0.0-31.31-24.04.1-barfix1</a> release.</p>
+<pre>echo 'deb [signed-by=/etc/apt/keyrings/resize-amdgpu-bars.gpg] https://github.com/exabit-io/resize-amdgpu-bars/releases/download/kernel-barfix ./' \
     | sudo tee /etc/apt/sources.list.d/linux-hwe-7.0-barfix.list
+printf 'Package: *\nPin: release l=linux-hwe-7.0-barfix\nPin-Priority: 1001\n' \
+    | sudo tee /etc/apt/preferences.d/linux-hwe-7.0-barfix
 sudo apt update
-sudo apt install linux-generic-hwe-24.04</pre>
-<p>Current: <strong>7.0.0-31.31~24.04.1+barfix1</strong> (ABI 7.0.0-31). Not Secure Boot signed; see the release notes.</p>
+sudo apt install linux-generic-hwe-24.04     # later: sudo apt update &amp;&amp; sudo apt upgrade</pre>
+<p>Current: <strong>7.0.0-34.34~24.04.1+barfix1</strong> (ABI 7.0.0-34, Cascade Lake build); the channel
+also carries 7.0.0-31.31~24.04.1+barfix1. Not Secure Boot signed; see the release notes.</p>
 
 </body></html>
